@@ -4,6 +4,8 @@
 
 Со схемами системы можно ознакомиться в разделе [docs](./docs/).
 
+Документация backend/frontend находится отдельно в [docs/application](./docs/application/): [план итераций](./docs/application/plan.md).
+
 ## Возможный вариант структура репозитория
 ```text
 ./
