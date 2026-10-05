@@ -38,6 +38,25 @@ services:
     volumes:
       - minio-data:/data
 
+  airflow:
+    image: apache/airflow:2.10.2-python3.11
+    command: standalone
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      PYTHONPATH: /opt/airflow/repo
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/repo/pipelines/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      RAW_DATA_DIR: /data/raw
+      _PIP_ADDITIONAL_REQUIREMENTS: pydantic>=2.9 confluent-kafka>=2.5
+    volumes:
+      - .:/opt/airflow/repo
+      - raw-data:/data/raw
+
 volumes:
+  raw-data:
   postgres-data:
   minio-data:
