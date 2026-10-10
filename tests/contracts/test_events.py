@@ -120,6 +120,12 @@ def test_invalid_payload(payload):
         parse_event(payload)
 
 
+@pytest.mark.parametrize("payload", [b"not json", b"\xff\xfe", '{"event_type":"incident.created"}'])
+def test_pr5_malformed_or_unsupported_messages(payload):
+    with pytest.raises(ValueError):
+        parse_event(payload)
+
+
 @pytest.mark.parametrize("index,changes", [
     (0, {"records": -1}), (0, {"schema_version": 0}), (0, {"records": 1.5}),
     (1, {"new_version": 1}), (1, {"previous_version": 0}), (1, {"new_version": 0}),
