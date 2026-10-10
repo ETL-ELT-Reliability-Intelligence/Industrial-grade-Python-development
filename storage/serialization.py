@@ -5,9 +5,13 @@ types; timestamps are ISO 8601 strings and durations are seconds.
 """
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import timedelta
+import json
 from typing import Any
 
+from pydantic import Field, TypeAdapter
+
+from contracts.base import Contract
 from contracts.quality import (
     CheckDetail, CheckKind, CheckResult, CheckStatus, Constraint,
     DecisionReason, FreshnessConstraint, FreshnessObservation,
@@ -17,39 +21,44 @@ from contracts.quality import (
 )
 
 
-def _instant(value: str | None) -> datetime | None:
-    """Parse an optional ISO 8601 timestamp."""
-    return None if value is None else datetime.fromisoformat(value)
+_FIELDS = TypeAdapter(tuple[SchemaField, ...] | None)
+_DETAILS = TypeAdapter(tuple[CheckDetail, ...])
+_REASONS = TypeAdapter(tuple[DecisionReason, ...])
+_OBSERVATIONS = {
+    CheckKind.FRESHNESS: FreshnessObservation,
+    CheckKind.NULL_RATE: NullRateObservation,
+    CheckKind.ROW_COUNT: RowCountObservation,
+    CheckKind.SCHEMA: SchemaObservation,
+}
+_CONSTRAINTS = {
+    CheckKind.NULL_RATE: NullRateConstraint,
+    CheckKind.ROW_COUNT: RowCountConstraint,
+    CheckKind.SCHEMA: SchemaConstraint,
+}
+
+
+class _StoredFreshnessConstraint(Contract):
+    """Preserve the existing JSONB duration format, independently of model JSON."""
+
+    max_age_seconds: float = Field(ge=0, allow_inf_nan=False)
 
 
 def fields_to_json(fields: tuple[SchemaField, ...] | None) -> list[dict[str, str]] | None:
     """Encode schema fields, preserving None for an unavailable schema."""
     if fields is None:
         return None
-    return [{"name": item.name, "data_type": item.data_type} for item in fields]
+    return [item.model_dump(mode="json") for item in fields]
 
 
 def fields_from_json(data: list[dict[str, str]] | None) -> tuple[SchemaField, ...] | None:
     """Decode schema fields encoded by fields_to_json."""
-    if data is None:
-        return None
-    return tuple(SchemaField(item["name"], item["data_type"]) for item in data)
+    return _FIELDS.validate_json(json.dumps(data), strict=True)
 
 
 def observation_to_json(observation: Observation) -> dict[str, Any]:
     """Encode any quality observation as a JSON object."""
-    if isinstance(observation, FreshnessObservation):
-        last = observation.last_updated_at
-        return {
-            "last_updated_at": None if last is None else last.isoformat(),
-            "evaluated_at": observation.evaluated_at.isoformat(),
-        }
-    if isinstance(observation, NullRateObservation):
-        return {"null_rate": observation.null_rate}
-    if isinstance(observation, RowCountObservation):
-        return {"row_count": observation.row_count}
-    if isinstance(observation, SchemaObservation):
-        return {"fields": fields_to_json(observation.fields)}
+    if isinstance(observation, tuple(_OBSERVATIONS.values())):
+        return observation.model_dump(mode="json")
     raise ValueError("unsupported observation type")
 
 
@@ -57,71 +66,42 @@ def constraint_to_json(constraint: Constraint) -> dict[str, Any]:
     """Encode any quality constraint as a JSON object."""
     if isinstance(constraint, FreshnessConstraint):
         return {"max_age_seconds": constraint.max_age.total_seconds()}
-    if isinstance(constraint, NullRateConstraint):
-        return {"max_null_rate": constraint.max_null_rate}
-    if isinstance(constraint, RowCountConstraint):
-        return {"min_count": constraint.min_count, "max_count": constraint.max_count}
-    if isinstance(constraint, SchemaConstraint):
-        return {
-            "fields": fields_to_json(constraint.fields),
-            "allow_extra_fields": constraint.allow_extra_fields,
-        }
+    if isinstance(constraint, tuple(_CONSTRAINTS.values())):
+        return constraint.model_dump(mode="json")
     raise ValueError("unsupported constraint type")
 
 
 def observation_from_json(kind: CheckKind, data: Mapping[str, Any]) -> Observation:
     """Decode the observation of a check of the given kind."""
-    if kind is CheckKind.FRESHNESS:
-        return FreshnessObservation(
-            _instant(data["last_updated_at"]), datetime.fromisoformat(data["evaluated_at"]),
-        )
-    if kind is CheckKind.NULL_RATE:
-        return NullRateObservation(data["null_rate"])
-    if kind is CheckKind.ROW_COUNT:
-        return RowCountObservation(data["row_count"])
-    return SchemaObservation(fields_from_json(data["fields"]))
+    return _OBSERVATIONS[kind].model_validate_json(json.dumps(dict(data)))
 
 
 def constraint_from_json(kind: CheckKind, data: Mapping[str, Any]) -> Constraint:
     """Decode the constraint of a check of the given kind."""
     if kind is CheckKind.FRESHNESS:
-        return FreshnessConstraint(timedelta(seconds=data["max_age_seconds"]))
-    if kind is CheckKind.NULL_RATE:
-        return NullRateConstraint(data["max_null_rate"])
-    if kind is CheckKind.ROW_COUNT:
-        return RowCountConstraint(data["min_count"], data["max_count"])
-    return SchemaConstraint(fields_from_json(data["fields"]), data["allow_extra_fields"])
+        stored = _StoredFreshnessConstraint.model_validate_json(json.dumps(dict(data)))
+        return FreshnessConstraint(max_age=timedelta(seconds=stored.max_age_seconds))
+    return _CONSTRAINTS[kind].model_validate_json(json.dumps(dict(data)))
 
 
 def details_to_json(details: tuple[CheckDetail, ...]) -> list[dict[str, str | None]]:
     """Encode structured check diagnostics."""
-    return [
-        {"code": item.code, "field": item.field, "expected": item.expected, "actual": item.actual}
-        for item in details
-    ]
+    return [item.model_dump(mode="json") for item in details]
 
 
 def details_from_json(data: list[Mapping[str, Any]]) -> tuple[CheckDetail, ...]:
     """Decode structured check diagnostics."""
-    return tuple(
-        CheckDetail(item["code"], item["field"], item["expected"], item["actual"])
-        for item in data
-    )
+    return _DETAILS.validate_json(json.dumps(data), strict=True)
 
 
 def reasons_to_json(reasons: tuple[DecisionReason, ...]) -> list[dict[str, str | None]]:
     """Encode the explanation of a quality decision."""
-    return [
-        {"code": item.code, "message": item.message, "check_id": item.check_id}
-        for item in reasons
-    ]
+    return [item.model_dump(mode="json") for item in reasons]
 
 
 def reasons_from_json(data: list[Mapping[str, Any]]) -> tuple[DecisionReason, ...]:
     """Decode the explanation of a quality decision."""
-    return tuple(
-        DecisionReason(item["code"], item["message"], item["check_id"]) for item in data
-    )
+    return _REASONS.validate_json(json.dumps(data), strict=True)
 
 
 def check_result_to_row(result: CheckResult) -> dict[str, Any]:
@@ -155,6 +135,6 @@ def check_result_from_row(row: Mapping[str, Any]) -> CheckResult:
         constraint=constraint_from_json(kind, row["constraint_spec"]),
         reason_code=row["reason_code"],
         message=row["message"],
-        context=QualityContext(row["dataset_id"], row["scope_id"], row["column_name"]),
+        context=QualityContext(dataset_id=row["dataset_id"], scope_id=row["scope_id"], column=row["column_name"]),
         details=details_from_json(row["details"]),
     )

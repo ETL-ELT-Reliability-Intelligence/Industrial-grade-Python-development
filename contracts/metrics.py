@@ -3,11 +3,14 @@
 None denotes an unavailable measurement, never a measured zero.
 """
 
-from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
+from typing import Annotated, Self
 
-from contracts._validation import _count, _number, _rate, _text, _timestamp
+from pydantic import AwareDatetime, Field, model_validator
+
+from contracts.base import Contract, NonBlankText
+
+NonNegativeNumber = Annotated[int, Field(ge=0)] | Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 class MetricKind(str, Enum):
@@ -22,8 +25,7 @@ class MetricKind(str, Enum):
 COLUMN_METRICS = frozenset({MetricKind.NULL_RATE, MetricKind.DISTINCT_COUNT})
 
 
-@dataclass(frozen=True)
-class MetricPoint:
+class MetricPoint(Contract):
     """One statistic of one scope (batch, partition or window) of a dataset.
 
     scope_id has the same meaning as QualityContext.scope_id. stats_version
@@ -31,32 +33,25 @@ class MetricPoint:
     Column metrics require a column; dataset-level metrics forbid it.
     """
 
-    dataset_id: str
-    scope_id: str
+    dataset_id: NonBlankText
+    scope_id: NonBlankText
     metric: MetricKind
-    observed_at: datetime
-    stats_version: str
-    value: int | float | None = None
-    column: str | None = None
+    observed_at: AwareDatetime
+    stats_version: NonBlankText
+    value: NonNegativeNumber | None = None
+    column: NonBlankText | None = None
 
-    def __post_init__(self) -> None:
-        """Validate identifiers, column usage and the value range of the metric."""
-        for name in ("dataset_id", "scope_id", "stats_version"):
-            _text(getattr(self, name), name)
-        if not isinstance(self.metric, MetricKind):
-            raise ValueError("metric must be a MetricKind")
-        _timestamp(self.observed_at, "observed_at")
+    @model_validator(mode="after")
+    def consistent_metric(self) -> Self:
         if self.metric in COLUMN_METRICS:
-            _text(self.column, "column")
+            if self.column is None:
+                raise ValueError("column is required for column metrics")
         elif self.column is not None:
             raise ValueError(f"{self.metric.value} is a dataset-level metric")
-        if self.value is None:
-            return
-        if self.metric in (MetricKind.ROW_COUNT, MetricKind.DISTINCT_COUNT):
-            _count(self.value, "value")
-        elif self.metric is MetricKind.NULL_RATE:
-            _rate(self.value, "value")
-        else:
-            _number(self.value, "value")
-            if self.value < 0:
-                raise ValueError("value must not be negative")
+        if self.value is not None:
+            if self.metric in (MetricKind.ROW_COUNT, MetricKind.DISTINCT_COUNT):
+                if type(self.value) is not int:
+                    raise ValueError("count metrics require an integer value")
+            elif self.metric is MetricKind.NULL_RATE and self.value > 1:
+                raise ValueError("null_rate must be in [0, 1]")
+        return self

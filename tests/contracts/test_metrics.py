@@ -13,11 +13,11 @@ class MetricPointTests(unittest.TestCase):
 
     def test_valid_points(self):
         """Accept every metric kind with a suitable value, including None."""
-        MetricPoint("orders", "b-1", MetricKind.ROW_COUNT, NOW, "v1", 0)
-        MetricPoint("orders", "b-1", MetricKind.ROW_COUNT, NOW, "v1")
-        MetricPoint("orders", "b-1", MetricKind.NULL_RATE, NOW, "v1", 0.5, "id")
-        MetricPoint("orders", "b-1", MetricKind.DISTINCT_COUNT, NOW, "v1", 10, "id")
-        MetricPoint("orders", "b-1", MetricKind.FRESHNESS_SECONDS, NOW, "v1", 12.5)
+        MetricPoint(dataset_id="orders", scope_id="b-1", metric=MetricKind.ROW_COUNT, observed_at=NOW, stats_version="v1", value=0)
+        MetricPoint(dataset_id="orders", scope_id="b-1", metric=MetricKind.ROW_COUNT, observed_at=NOW, stats_version="v1")
+        MetricPoint(dataset_id="orders", scope_id="b-1", metric=MetricKind.NULL_RATE, observed_at=NOW, stats_version="v1", value=0.5, column="id")
+        MetricPoint(dataset_id="orders", scope_id="b-1", metric=MetricKind.DISTINCT_COUNT, observed_at=NOW, stats_version="v1", value=10, column="id")
+        MetricPoint(dataset_id="orders", scope_id="b-1", metric=MetricKind.FRESHNESS_SECONDS, observed_at=NOW, stats_version="v1", value=12.5)
 
     def test_invalid_points(self):
         """Reject wrong columns, out-of-range values and malformed fields."""

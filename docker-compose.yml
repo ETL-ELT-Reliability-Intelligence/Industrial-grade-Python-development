@@ -1,0 +1,62 @@
+# Local data-platform infrastructure. Airflow is added in a later step.
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: reliability
+      POSTGRES_PASSWORD: reliability
+      POSTGRES_DB: reliability
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio-data:/data
+
+  airflow:
+    image: apache/airflow:2.10.2-python3.11
+    command: standalone
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      PYTHONPATH: /opt/airflow/repo
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/repo/pipelines/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      RAW_DATA_DIR: /data/raw
+      _PIP_ADDITIONAL_REQUIREMENTS: pydantic>=2.9 confluent-kafka>=2.5
+    volumes:
+      - .:/opt/airflow/repo
+      - raw-data:/data/raw
+
+volumes:
+  raw-data:
+  postgres-data:
+  minio-data:

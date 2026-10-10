@@ -10,7 +10,7 @@ function Invoke-Checked {
 }
 
 Invoke-Checked docker @("compose", "-f", "infra/docker-compose.yml", "up", "-d", "--wait", "postgres")
-Invoke-Checked py @("-3.12", "-m", "pip", "install", "-r", "storage/requirements.txt")
+Invoke-Checked py @("-3.12", "-m", "pip", "install", "-e", ".[dev]", "-r", "storage/requirements.txt")
 
 if (-not $env:DATABASE_URL) {
     $env:DATABASE_URL = "postgresql://reliability:reliability@localhost:5432/reliability"

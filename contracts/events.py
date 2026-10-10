@@ -1,27 +1,21 @@
-"""Kafka event contracts shared by producers and consumers.
+"""Event contracts shared between components over Kafka.
 
-Events are transport messages, not the source of truth: consumers persist their
-state in PostgreSQL. Timestamps are timezone-aware and serialized as ISO 8601.
-Every event carries a unique event_id so that redelivery can be detected.
-Incident events belong to the Incident Engine and have no contract here yet.
+Producers and consumers depend on these models, not on each other.
 """
 
 import json
-from dataclasses import dataclass, fields
-from datetime import datetime
 from enum import Enum
-from typing import Any, ClassVar, get_args, get_type_hints
+from typing import Literal, Self
+from uuid import UUID, uuid4
 
-from contracts._validation import (
-    _count, _number, _optional_text, _rate, _text, _timestamp, _version,
-)
+from pydantic import AwareDatetime, Field, model_validator
+
+from contracts.base import Contract, NonBlankText, Rate
 
 CONTRACT_VERSION = 1
 
 
 class EventType(str, Enum):
-    """Event names used as Kafka message types (ARCHITECTURE.md, section 5.3)."""
-
     DATASET_INGESTED = "dataset.ingested"
     PIPELINE_STARTED = "pipeline.started"
     PIPELINE_FINISHED = "pipeline.finished"
@@ -29,255 +23,154 @@ class EventType(str, Enum):
     SCHEMA_CHANGED = "schema.changed"
     DATA_QUALITY_FAILED = "data.quality.failed"
     ANOMALY_DETECTED = "anomaly.detected"
-    INCIDENT_CREATED = "incident.created"
-    INCIDENT_UPDATED = "incident.updated"
 
 
-@dataclass(frozen=True)
-class DatasetIngested:
-    """Ingestion stored one batch; this says nothing about the batch quality."""
+class Event(Contract):
+    event_id: UUID = Field(default_factory=uuid4)
+    contract_version: int = Field(default=CONTRACT_VERSION, ge=1, le=1)
+    event_type: EventType
 
-    event_id: str
-    dataset_id: str
-    batch_id: str
-    records: int
-    received_at: datetime
-    schema_version: int
+    @property
+    def topic(self) -> str:
+        """One topic per event type, named after it."""
+        return self.event_type.value
 
-    event_type: ClassVar[EventType] = EventType.DATASET_INGESTED
-
-    def __post_init__(self) -> None:
-        """Validate identifiers, record count, schema version and receive time."""
-        for name in ("event_id", "dataset_id", "batch_id"):
-            _text(getattr(self, name), name)
-        _count(self.records, "records")
-        _timestamp(self.received_at, "received_at")
-        _version(self.schema_version, "schema_version")
+    @property
+    def key(self) -> str:
+        """Partition key; keeps events of one dataset/pipeline ordered."""
+        raise NotImplementedError
 
 
-@dataclass(frozen=True)
-class PipelineStarted:
-    """A pipeline run started."""
+class DatasetIngestedEvent(Event):
+    event_type: Literal[EventType.DATASET_INGESTED] = EventType.DATASET_INGESTED
+    dataset_id: NonBlankText
+    batch_id: NonBlankText
+    records: int = Field(ge=0)
+    received_at: AwareDatetime
+    schema_version: int = Field(ge=1)
+    raw_uri: NonBlankText | None = None
 
-    event_id: str
-    pipeline_id: str
-    run_id: str
-    started_at: datetime
-
-    event_type: ClassVar[EventType] = EventType.PIPELINE_STARTED
-
-    def __post_init__(self) -> None:
-        """Validate identifiers and the aware start time."""
-        for name in ("event_id", "pipeline_id", "run_id"):
-            _text(getattr(self, name), name)
-        _timestamp(self.started_at, "started_at")
+    @property
+    def key(self) -> str:
+        return self.dataset_id
 
 
-@dataclass(frozen=True)
-class PipelineFinished:
-    """A pipeline run finished successfully."""
+class SchemaChangedEvent(Event):
+    event_type: Literal[EventType.SCHEMA_CHANGED] = EventType.SCHEMA_CHANGED
+    dataset_id: NonBlankText
+    batch_id: NonBlankText
+    previous_version: int = Field(ge=1)
+    new_version: int = Field(ge=1)
+    detected_at: AwareDatetime
 
-    event_id: str
-    pipeline_id: str
-    run_id: str
-    started_at: datetime
-    finished_at: datetime
+    @model_validator(mode="after")
+    def changed_version(self) -> Self:
+        if self.previous_version == self.new_version:
+            raise ValueError("new_version must differ from previous_version")
+        return self
 
-    event_type: ClassVar[EventType] = EventType.PIPELINE_FINISHED
+    @property
+    def key(self) -> str:
+        return self.dataset_id
 
-    def __post_init__(self) -> None:
-        """Validate identifiers and require finishing not before the start."""
-        for name in ("event_id", "pipeline_id", "run_id"):
-            _text(getattr(self, name), name)
-        _timestamp(self.started_at, "started_at")
-        _timestamp(self.finished_at, "finished_at")
+
+class PipelineEvent(Event):
+    pipeline_id: NonBlankText
+    run_id: NonBlankText
+    started_at: AwareDatetime
+
+    @property
+    def key(self) -> str:
+        return self.pipeline_id
+
+
+class PipelineStartedEvent(PipelineEvent):
+    event_type: Literal[EventType.PIPELINE_STARTED] = EventType.PIPELINE_STARTED
+
+
+class PipelineFinishedEvent(PipelineEvent):
+    event_type: Literal[EventType.PIPELINE_FINISHED] = EventType.PIPELINE_FINISHED
+    finished_at: AwareDatetime
+
+    @property
+    def duration_seconds(self) -> float:
+        """Elapsed time, derived locally and omitted from the wire contract."""
+        return (self.finished_at - self.started_at).total_seconds()
+
+    @model_validator(mode="after")
+    def consistent_times(self) -> Self:
         if self.finished_at < self.started_at:
             raise ValueError("finished_at must not be before started_at")
+        return self
 
 
-@dataclass(frozen=True)
-class PipelineFailed:
-    """A pipeline run failed; error is None when no message is available."""
+class PipelineFailedEvent(PipelineEvent):
+    event_type: Literal[EventType.PIPELINE_FAILED] = EventType.PIPELINE_FAILED
+    failed_at: AwareDatetime
+    error: NonBlankText | None
 
-    event_id: str
-    pipeline_id: str
-    run_id: str
-    started_at: datetime
-    failed_at: datetime
-    error: str | None
-
-    event_type: ClassVar[EventType] = EventType.PIPELINE_FAILED
-
-    def __post_init__(self) -> None:
-        """Validate identifiers, chronological order and the optional error text."""
-        for name in ("event_id", "pipeline_id", "run_id"):
-            _text(getattr(self, name), name)
-        _timestamp(self.started_at, "started_at")
-        _timestamp(self.failed_at, "failed_at")
+    @model_validator(mode="after")
+    def chronological(self) -> Self:
         if self.failed_at < self.started_at:
             raise ValueError("failed_at must not be before started_at")
-        _optional_text(self.error, "error")
+        return self
 
 
-@dataclass(frozen=True)
-class SchemaChanged:
-    """A batch arrived with a schema version different from the previous one."""
+class DataQualityFailedEvent(Event):
+    """One deterministic check failed; evidence remains in the check result."""
 
-    event_id: str
-    dataset_id: str
-    batch_id: str
-    previous_schema_version: int
-    schema_version: int
-    changed_at: datetime
+    event_type: Literal[EventType.DATA_QUALITY_FAILED] = EventType.DATA_QUALITY_FAILED
+    dataset_id: NonBlankText
+    scope_id: NonBlankText
+    check_id: NonBlankText
+    reason_code: NonBlankText
+    failed_at: AwareDatetime
 
-    event_type: ClassVar[EventType] = EventType.SCHEMA_CHANGED
-
-    def __post_init__(self) -> None:
-        """Validate identifiers, versions and require an actual version change."""
-        for name in ("event_id", "dataset_id", "batch_id"):
-            _text(getattr(self, name), name)
-        _version(self.previous_schema_version, "previous_schema_version")
-        _version(self.schema_version, "schema_version")
-        if self.previous_schema_version == self.schema_version:
-            raise ValueError("schema_version must differ from previous_schema_version")
-        _timestamp(self.changed_at, "changed_at")
+    @property
+    def key(self) -> str:
+        return self.dataset_id
 
 
-@dataclass(frozen=True)
-class DataQualityFailed:
-    """One deterministic check failed; details are stored with the check result."""
+class AnomalyDetectedEvent(Event):
+    """Detector evidence with a finite ranking score in [0, 1]."""
 
-    event_id: str
-    dataset_id: str
-    scope_id: str
-    check_id: str
-    reason_code: str
-    failed_at: datetime
+    event_type: Literal[EventType.ANOMALY_DETECTED] = EventType.ANOMALY_DETECTED
+    anomaly_id: NonBlankText
+    dataset_id: NonBlankText
+    batch_id: NonBlankText | None
+    metric: NonBlankText
+    expected: float = Field(allow_inf_nan=False)
+    actual: float = Field(allow_inf_nan=False)
+    score: Rate
+    detector: NonBlankText
+    model_version: NonBlankText | None
+    detected_at: AwareDatetime
 
-    event_type: ClassVar[EventType] = EventType.DATA_QUALITY_FAILED
-
-    def __post_init__(self) -> None:
-        """Validate identifiers, the stable reason code and the aware time."""
-        for name in ("event_id", "dataset_id", "scope_id", "check_id", "reason_code"):
-            _text(getattr(self, name), name)
-        _timestamp(self.failed_at, "failed_at")
-
-
-@dataclass(frozen=True)
-class AnomalyDetected:
-    """A detector found a deviation; score is a ranking value in [0, 1]."""
-
-    event_id: str
-    anomaly_id: str
-    dataset_id: str
-    batch_id: str | None
-    metric: str
-    expected: float
-    actual: float
-    score: float
-    detector: str
-    model_version: str | None
-    detected_at: datetime
-
-    event_type: ClassVar[EventType] = EventType.ANOMALY_DETECTED
-
-    def __post_init__(self) -> None:
-        """Validate identifiers, numeric evidence and the detector description."""
-        for name in ("event_id", "anomaly_id", "dataset_id", "metric", "detector"):
-            _text(getattr(self, name), name)
-        _optional_text(self.batch_id, "batch_id")
-        _optional_text(self.model_version, "model_version")
-        _number(self.expected, "expected")
-        _number(self.actual, "actual")
-        _rate(self.score, "score")
-        _timestamp(self.detected_at, "detected_at")
+    @property
+    def key(self) -> str:
+        return self.dataset_id
 
 
-Event = (
-    DatasetIngested | PipelineStarted | PipelineFinished | PipelineFailed
-    | SchemaChanged | DataQualityFailed | AnomalyDetected
-)
-
-_EVENT_CLASSES = (
-    DatasetIngested, PipelineStarted, PipelineFinished, PipelineFailed,
-    SchemaChanged, DataQualityFailed, AnomalyDetected,
-)
-_REGISTRY = {cls.event_type: cls for cls in _EVENT_CLASSES}
-
-
-def _is_datetime(hint: Any) -> bool:
-    """Return True for datetime and optional datetime annotations."""
-    return hint is datetime or datetime in get_args(hint)
+_MODELS: dict[EventType, type[Event]] = {
+    EventType.DATASET_INGESTED: DatasetIngestedEvent,
+    EventType.SCHEMA_CHANGED: SchemaChangedEvent,
+    EventType.PIPELINE_STARTED: PipelineStartedEvent,
+    EventType.PIPELINE_FINISHED: PipelineFinishedEvent,
+    EventType.PIPELINE_FAILED: PipelineFailedEvent,
+    EventType.DATA_QUALITY_FAILED: DataQualityFailedEvent,
+    EventType.ANOMALY_DETECTED: AnomalyDetectedEvent,
+}
 
 
-def _parse_datetime(value: Any, name: str) -> datetime:
-    """Parse an ISO 8601 string, raising ValueError for anything else."""
-    if not isinstance(value, str):
-        raise ValueError(f"{name} must be an ISO 8601 string")
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        raise ValueError(f"{name} must be an ISO 8601 timestamp") from None
-
-
-def event_to_dict(event: Event) -> dict[str, Any]:
-    """Return the JSON-compatible wire representation of an event."""
-    if not isinstance(event, _EVENT_CLASSES):
-        raise ValueError("event must be one of the supported event contracts")
-    payload: dict[str, Any] = {
-        "event_type": event.event_type.value,
-        "contract_version": CONTRACT_VERSION,
-    }
-    for field in fields(event):
-        value = getattr(event, field.name)
-        payload[field.name] = value.isoformat() if isinstance(value, datetime) else value
-    return payload
-
-
-def event_from_dict(payload: dict[str, Any]) -> Event:
-    """Build a validated event from its wire representation.
-
-    Missing and unexpected fields, unknown types and unsupported contract
-    versions raise ValueError, as do values rejected by the event contract.
-    """
-    if not isinstance(payload, dict):
+def parse_event(payload: str | bytes) -> Event:
+    """Deserialize a Kafka message into its concrete event model."""
+    data = json.loads(payload)
+    if not isinstance(data, dict):
         raise ValueError("event payload must be a JSON object")
-    data = dict(payload)
-    version = data.pop("contract_version", None)
-    if version != CONTRACT_VERSION:
-        raise ValueError(f"unsupported contract_version: {version!r}")
     try:
-        event_type = EventType(data.pop("event_type", None))
-    except ValueError:
-        raise ValueError("unknown event_type") from None
-    cls = _REGISTRY.get(event_type)
-    if cls is None:
-        raise ValueError(f"unsupported event_type: {event_type.value}")
-    names = {field.name for field in fields(cls)}
-    if data.keys() != names:
-        raise ValueError(
-            f"invalid {event_type.value} fields: missing={sorted(names - data.keys())}, "
-            f"unexpected={sorted(data.keys() - names)}"
-        )
-    hints = get_type_hints(cls)
-    for name, value in data.items():
-        if value is not None and _is_datetime(hints[name]):
-            data[name] = _parse_datetime(value, name)
-    return cls(**data)
-
-
-def encode_event(event: Event) -> bytes:
-    """Serialize an event to canonical UTF-8 JSON for a Kafka message value."""
-    return json.dumps(
-        event_to_dict(event), ensure_ascii=False, allow_nan=False,
-        separators=(",", ":"), sort_keys=True,
-    ).encode("utf-8")
-
-
-def decode_event(data: bytes | str) -> Event:
-    """Deserialize and validate a Kafka message value."""
-    try:
-        payload = json.loads(data)
-    except (TypeError, ValueError) as error:
-        raise ValueError("event is not valid JSON") from error
-    return event_from_dict(payload)
+        model = _MODELS[EventType(data.get("event_type"))]
+    except (ValueError, TypeError, KeyError) as error:
+        raise ValueError("unknown event_type") from error
+    # Keep JSON validation mode: strict UUID/datetime fields accept their wire
+    # strings here while Python construction still requires native objects.
+    return model.model_validate_json(payload)

@@ -1,0 +1,65 @@
+{
+  "snapshot_at": "2026-10-05T10:10:00+00:00",
+  "incidents": [
+    {
+      "id": "inc-042",
+      "title": "Снижение объёма заказов влияет на отчёт о выручке",
+      "summary": "Загрузки завершились успешно, но объём orders оказался ниже ожидаемого. Связанные наблюдения есть в fct_orders и revenue.",
+      "status": "open",
+      "severity": "critical",
+      "detected_at": "2026-10-05T10:05:00+00:00",
+      "affected_dataset_ids": ["orders", "fct_orders", "revenue"],
+      "observations": [
+        {"id": "obs-001", "dataset_id": "orders", "metric": "row_count", "expected": 4500000, "actual": 1800000, "unit": "rows", "observed_at": "2026-10-05T10:02:00+00:00"},
+        {"id": "obs-002", "dataset_id": "fct_orders", "metric": "row_count", "expected": 4400000, "actual": 1750000, "unit": "rows", "observed_at": "2026-10-05T10:03:00+00:00"},
+        {"id": "obs-003", "dataset_id": "revenue", "metric": "row_count", "expected": 12000, "actual": 4800, "unit": "rows", "observed_at": "2026-10-05T10:05:00+00:00"}
+      ],
+      "root_cause_candidates": [
+        {"dataset_id": "orders", "description": "Возможна частичная загрузка из upstream API: объём входных данных снизился раньше downstream-наблюдений.", "score": 0.87}
+      ],
+      "timeline": [
+        {"at": "2026-10-05T10:01:00+00:00", "description": "Загрузка orders завершилась со статусом success."},
+        {"at": "2026-10-05T10:02:00+00:00", "description": "Обнаружено снижение row_count в orders."},
+        {"at": "2026-10-05T10:03:00+00:00", "description": "Аналогичное снижение в fct_orders."},
+        {"at": "2026-10-05T10:05:00+00:00", "description": "Наблюдение в revenue объединено в инцидент inc-042."}
+      ],
+      "impact": {"potential_dataset_ids": ["stg_orders", "fct_orders", "revenue", "customer_ltv"], "potential_pipeline_ids": ["orders_daily", "revenue_refresh"], "potential_dashboard_ids": ["revenue_dashboard"]}
+    },
+    {
+      "id": "inc-041",
+      "title": "Данные клиентов обновляются с задержкой",
+      "summary": "Последний доступный snapshot customers старше целевого порога freshness. Проверяется задержка загрузки.",
+      "status": "investigating",
+      "severity": "warning",
+      "detected_at": "2026-10-05T09:40:00+00:00",
+      "affected_dataset_ids": ["customers"],
+      "observations": [
+        {"id": "obs-004", "dataset_id": "customers", "metric": "freshness", "expected": 30, "actual": 95, "unit": "minutes", "observed_at": "2026-10-05T09:40:00+00:00"}
+      ],
+      "root_cause_candidates": [],
+      "timeline": [
+        {"at": "2026-10-05T09:40:00+00:00", "description": "Зафиксировано превышение порога freshness."},
+        {"at": "2026-10-05T09:45:00+00:00", "description": "Инцидент передан на расследование."}
+      ],
+      "impact": {"potential_dataset_ids": ["customer_ltv"], "potential_pipeline_ids": ["customer_sync"], "potential_dashboard_ids": []}
+    },
+    {
+      "id": "inc-040",
+      "title": "Восстановлена загрузка платежей",
+      "summary": "После повторного запуска ingestion метрика null_rate вернулась к обычному значению. Инцидент закрыт.",
+      "status": "resolved",
+      "severity": "info",
+      "detected_at": "2026-10-04T18:00:00+00:00",
+      "affected_dataset_ids": ["payments"],
+      "observations": [
+        {"id": "obs-005", "dataset_id": "payments", "metric": "null_rate", "expected": 0.01, "actual": 0.15, "unit": "ratio", "observed_at": "2026-10-04T18:00:00+00:00"}
+      ],
+      "root_cause_candidates": [],
+      "timeline": [
+        {"at": "2026-10-04T18:00:00+00:00", "description": "Обнаружено увеличение null_rate."},
+        {"at": "2026-10-04T18:20:00+00:00", "description": "Повторная загрузка завершилась; инцидент закрыт."}
+      ],
+      "impact": {"potential_dataset_ids": [], "potential_pipeline_ids": [], "potential_dashboard_ids": []}
+    }
+  ]
+}

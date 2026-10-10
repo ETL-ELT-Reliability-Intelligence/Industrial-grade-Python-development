@@ -257,7 +257,7 @@ class PostgresQualityRepository(_PostgresRepository):
         ).fetchone()
         if row is None:
             return None
-        return QualityDecision(QualityStatus(row["status"]), reasons_from_json(row["reasons"]))
+        return QualityDecision(status=QualityStatus(row["status"]), reasons=reasons_from_json(row["reasons"]))
 
 
 class PostgresAnomalyRepository(_PostgresRepository):

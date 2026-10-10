@@ -11,7 +11,7 @@ PostgreSQL с миграциями Alembic и слой доступа к дан�
 | `contracts/events.py` | Kafka-события: типы, валидация, JSON-сериализация |
 | `contracts/metrics.py` | `MetricPoint` — статистика датасета за область (batch/окно) |
 | `contracts/state.py` | `Batch`, `PipelineRun`, `Anomaly`, `UserAction` |
-| `contracts/_validation.py` | общие проверки значений (переиспользуют `contracts.quality`) |
+| `contracts/base.py` | общий Pydantic v2 `Contract` и ограничения полей |
 | `storage/repositories.py` | Protocol-интерфейсы репозиториев |
 | `storage/serialization.py` | JSON-представление результатов проверок для JSONB |
 | `storage/postgres/` | `connect()`, реализации репозиториев, Alembic (`alembic.ini`, `migrations/`) |
@@ -26,10 +26,22 @@ PostgreSQL с миграциями Alembic и слой доступа к дан�
 
 К полям из примера ARCHITECTURE.md §5.2 добавлены `event_id` (для
 идемпотентности, вопрос 17) и `contract_version` (сейчас 1). Все времена —
-timezone-aware, в JSON — ISO 8601. Лишние и отсутствующие поля отклоняются.
+timezone-aware, в JSON — ISO 8601. `event_id` — UUID, по умолчанию создаётся UUID4.
+Лишние и отсутствующие обязательные поля отклоняются.
 Источник истины — PostgreSQL, события лишь доставляют изменения.
 
-Кодирование: `encode_event(event) -> bytes`, `decode_event(bytes | str) -> Event`.
+Кодирование: `event.model_dump_json()` (при необходимости `.encode("utf-8")`),
+декодирование: `parse_event(bytes | str) -> Event`. Сохранены классы с суффиксом
+`Event`, `.topic`, `.key` и `raw_uri` из main. Для изменения схемы используются
+`batch_id`, `previous_version`, `new_version`, `detected_at`. Времена пайплайна —
+`started_at`, `finished_at`, `failed_at`; длительность вычисляется в Python.
+
+Метрики и записи состояния также наследуют `Contract`: именованные аргументы,
+строгие типы, неизменяемые поля, запрет лишних полей и проверка defaults.
+Счётчики остаются целыми числами, `None` означает отсутствие измерения.
+Для JSON используется `model_validate_json`, для Python — `model_validate`.
+JSONB результатов качества сохраняет прежнюю структуру, включая длительность
+`max_age_seconds`, поэтому миграция ранее записанных результатов не требуется.
 
 ## Таблицы
 
@@ -78,7 +90,7 @@ Windows: `powershell -File scripts/storage_setup.ps1`, затем
 
 ## Допущения, требующие подтверждения
 
-1. События расширены полями `event_id` и `contract_version`; формат нужно согласовать с ролью №1 (producer) и ролью №3.
+1. Контракты событий согласованы с main и потребителями Ingestion/Airflow; старые dataclass-классы и функции encode/decode заменены Pydantic API.
 2. Для результатов проверок хранится только последний результат на ключ; истории пересчётов нет. Если нужна история, схема меняется.
 3. `data.quality.failed` не содержит решения policy (WARN/BLOCK): оно читается из `quality_decisions`.
 4. Зависимости в `storage/requirements.txt` заданы диапазонами; после первой установки их стоит зафиксировать через `pip freeze`, как в `services/backend/requirements.txt`.

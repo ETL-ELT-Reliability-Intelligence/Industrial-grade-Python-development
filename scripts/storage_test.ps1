@@ -6,5 +6,5 @@ Set-Location (Join-Path $PSScriptRoot "..")
 if (-not $env:TEST_DATABASE_URL) {
     $env:TEST_DATABASE_URL = "postgresql://reliability:reliability@localhost:5432/reliability_test"
 }
-py -3.12 -m unittest discover -s tests -t . -v
+py -3.12 -m pytest -q
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
