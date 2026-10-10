@@ -22,7 +22,7 @@ CASES = [
                              new_version=2, detected_at=NOW)),
     (PipelineStartedEvent, dict(pipeline_id="pipeline", run_id="run", started_at=NOW)),
     (PipelineFinishedEvent, dict(pipeline_id="pipeline", run_id="run", started_at=NOW,
-                                finished_at=LATER, duration_seconds=90)),
+                                finished_at=LATER)),
     (PipelineFailedEvent, dict(pipeline_id="pipeline", run_id="run", started_at=NOW,
                               failed_at=LATER, error="boom")),
     (DataQualityFailedEvent, dict(dataset_id="orders", scope_id="b1", check_id="rows",
@@ -124,7 +124,6 @@ def test_invalid_payload(payload):
     (0, {"records": -1}), (0, {"schema_version": 0}), (0, {"records": 1.5}),
     (1, {"new_version": 1}), (1, {"previous_version": 0}), (1, {"new_version": 0}),
     (3, {"finished_at": NOW - timedelta(seconds=1)}),
-    (3, {"duration_seconds": -1}), (3, {"duration_seconds": 91}),
     (4, {"failed_at": NOW - timedelta(seconds=1)}),
     (6, {"score": -0.1}), (6, {"score": 1.1}),
 ])
@@ -152,6 +151,24 @@ def test_optional_values_boundaries_and_equal_instants():
     )
     assert parse_event(event.model_dump_json()) == event
     event = PipelineFinishedEvent(
-        pipeline_id="p", run_id="r", started_at=NOW, finished_at=NOW, duration_seconds=0,
+        pipeline_id="p", run_id="r", started_at=NOW, finished_at=NOW,
     )
     assert parse_event(event.model_dump_json()) == event
+
+
+@pytest.mark.parametrize("elapsed", [timedelta(0), timedelta(seconds=90),
+                                     timedelta(microseconds=123456)])
+def test_duration_is_derived_and_not_transmitted(elapsed):
+    event = PipelineFinishedEvent(
+        pipeline_id="p", run_id="r", started_at=NOW, finished_at=NOW + elapsed,
+    )
+    assert event.duration_seconds == elapsed.total_seconds()
+    assert "duration_seconds" not in event.model_dump()
+    assert "duration_seconds" not in json.loads(event.model_dump_json())
+    assert "duration_seconds" not in event.model_json_schema(mode="serialization")["properties"]
+    restored = parse_event(event.model_dump_json())
+    assert restored.duration_seconds == elapsed.total_seconds()
+    with pytest.raises(ValidationError):
+        PipelineFinishedEvent(**event.model_dump(), duration_seconds=elapsed.total_seconds())
+    with pytest.raises(ValidationError):
+        parse_event(json.dumps(event.model_dump(mode="json") | {"duration_seconds": 0}))

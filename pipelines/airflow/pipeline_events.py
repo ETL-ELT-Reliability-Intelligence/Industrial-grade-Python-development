@@ -19,9 +19,9 @@ class PipelineRunReporter:
         self._publisher = publisher
         self._clock = clock
 
-    def started(self, pipeline_id: str, run_id: str) -> None:
+    def started(self, pipeline_id: str, run_id: str, *, started_at: datetime) -> None:
         self._publisher.publish(
-            PipelineStartedEvent(pipeline_id=pipeline_id, run_id=run_id, started_at=self._clock())
+            PipelineStartedEvent(pipeline_id=pipeline_id, run_id=run_id, started_at=started_at)
         )
 
     def finished(self, pipeline_id: str, run_id: str, started_at: datetime) -> None:
@@ -32,7 +32,6 @@ class PipelineRunReporter:
                 run_id=run_id,
                 started_at=started_at,
                 finished_at=now,
-                duration_seconds=max((now - started_at).total_seconds(), 0.0),
             )
         )
 

@@ -91,14 +91,16 @@ class PipelineStartedEvent(PipelineEvent):
 class PipelineFinishedEvent(PipelineEvent):
     event_type: Literal[EventType.PIPELINE_FINISHED] = EventType.PIPELINE_FINISHED
     finished_at: AwareDatetime
-    duration_seconds: float = Field(ge=0, allow_inf_nan=False)
+
+    @property
+    def duration_seconds(self) -> float:
+        """Elapsed time, derived locally and omitted from the wire contract."""
+        return (self.finished_at - self.started_at).total_seconds()
 
     @model_validator(mode="after")
     def consistent_times(self) -> Self:
         if self.finished_at < self.started_at:
             raise ValueError("finished_at must not be before started_at")
-        if self.duration_seconds != (self.finished_at - self.started_at).total_seconds():
-            raise ValueError("duration_seconds must match the start and finish times")
         return self
 
 

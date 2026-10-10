@@ -43,7 +43,10 @@ def _on_failure(context) -> None:
 def orders_ingestion():
     @task
     def report_started() -> None:
-        PipelineRunReporter(_publisher()).started(PIPELINE_ID, get_current_context()["run_id"])
+        context = get_current_context()
+        PipelineRunReporter(_publisher()).started(
+            PIPELINE_ID, context["run_id"], started_at=context["dag_run"].start_date,
+        )
 
     @task
     def ingest() -> dict:
