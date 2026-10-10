@@ -12,15 +12,15 @@ class CommonCheckTests(unittest.TestCase):
     def test_missing_observations_and_preserved_evidence(self):
         """Return UNKNOWN consistently and preserve all caller-supplied evidence."""
         now = datetime(2026, 10, 4, tzinfo=timezone.utc)
-        context = QualityContext("orders", "window-42")
+        context = QualityContext(dataset_id="orders", scope_id="window-42")
         for check, kind, observation, constraint in (
-            (check_freshness, CheckKind.FRESHNESS, FreshnessObservation(None, now),
-             FreshnessConstraint(timedelta(hours=1))),
-            (check_null_rate, CheckKind.NULL_RATE, NullRateObservation(None),
-             NullRateConstraint(0.1)),
-            (check_row_count, CheckKind.ROW_COUNT, RowCountObservation(None),
+            (check_freshness, CheckKind.FRESHNESS, FreshnessObservation(last_updated_at=None, evaluated_at=now),
+             FreshnessConstraint(max_age=timedelta(hours=1))),
+            (check_null_rate, CheckKind.NULL_RATE, NullRateObservation(null_rate=None),
+             NullRateConstraint(max_null_rate=0.1)),
+            (check_row_count, CheckKind.ROW_COUNT, RowCountObservation(row_count=None),
              RowCountConstraint(min_count=1)),
-            (check_schema, CheckKind.SCHEMA, SchemaObservation(None), SchemaConstraint(())),
+            (check_schema, CheckKind.SCHEMA, SchemaObservation(fields=None), SchemaConstraint(fields=())),
         ):
             with self.subTest(kind=kind):
                 result = check(observation, constraint, check_id="rule", context=context)
@@ -31,5 +31,6 @@ class CommonCheckTests(unittest.TestCase):
                 self.assertIs(result.constraint, constraint)
                 self.assertIs(result.context, context)
                 self.assertEqual(result.check_id, "rule")
+                self.assertEqual(type(result).model_validate_json(result.model_dump_json()), result)
                 self.assertEqual(result, check(observation, constraint,
                                               check_id="rule", context=context))

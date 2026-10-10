@@ -2,7 +2,10 @@
 
 `data_quality` — общая библиотека для batch- и stream-компонентов.
 Она принимает модели из `contracts.quality`, не обращается к источникам,
-не читает системные часы и не сохраняет результаты. Внешних зависимостей нет.
+не читает системные часы и не сохраняет результаты. Контракты используют Pydantic v2.
+Модели создаются с именованными аргументами; они неизменяемы, строго проверяют типы,
+запрещают лишние поля и проверяют значения по умолчанию. Ошибки контракта вызывают
+`pydantic.ValidationError` (подкласс `ValueError`).
 
 ## Проверки
 
@@ -66,33 +69,38 @@ from data_quality.checks import (
 )
 from data_quality.policies import evaluate_quality
 
-context = QualityContext("orders", "batch-42")
+context = QualityContext(dataset_id="orders", scope_id="batch-42")
 evaluated_at = datetime(2026, 10, 4, 12, tzinfo=timezone.utc)
-fields = (SchemaField("id", "integer"), SchemaField("comment", "string"))
+fields = (
+    SchemaField(name="id", data_type="integer"),
+    SchemaField(name="comment", data_type="string"),
+)
 
 results = [
     check_freshness(
-        FreshnessObservation(evaluated_at - timedelta(minutes=5), evaluated_at),
-        FreshnessConstraint(timedelta(minutes=10)),
+        FreshnessObservation(
+            last_updated_at=evaluated_at - timedelta(minutes=5), evaluated_at=evaluated_at,
+        ),
+        FreshnessConstraint(max_age=timedelta(minutes=10)),
         check_id="orders.freshness", context=context,
     ),
     check_null_rate(
-        NullRateObservation(0.15), NullRateConstraint(0.1),
+        NullRateObservation(null_rate=0.15), NullRateConstraint(max_null_rate=0.1),
         check_id="orders.comment.null_rate",
-        context=QualityContext("orders", "batch-42", "comment"),
+        context=QualityContext(dataset_id="orders", scope_id="batch-42", column="comment"),
     ),
     check_row_count(
-        RowCountObservation(100), RowCountConstraint(min_count=1),
+        RowCountObservation(row_count=100), RowCountConstraint(min_count=1),
         check_id="orders.row_count", context=context,
     ),
     check_schema(
-        SchemaObservation(fields), SchemaConstraint(fields),
+        SchemaObservation(fields=fields), SchemaConstraint(fields=fields),
         check_id="orders.schema", context=context,
     ),
 ]
 decision = evaluate_quality(
     results,
-    [PolicyRule("orders.comment.null_rate", on_fail=QualityStatus.WARN)],
+    [PolicyRule(check_id="orders.comment.null_rate", on_fail=QualityStatus.WARN)],
 )
 assert decision.status is QualityStatus.WARN
 ```
@@ -107,7 +115,5 @@ assert decision.status is QualityStatus.WARN
 `tests/data_quality/checks/` и `tests/data_quality/policies/`.
 Общее поведение проверок покрывается в `checks/test_common.py`.
 
-Из корня проекта: `python -m unittest discover -s tests -t . -v`.
-На Windows с Python Launcher: `py -3.11 -m unittest discover -s tests -t . -v`.
-Параметр `-t .` задаёт корень проекта для импорта, чтобы пакеты тестов
-не перекрывали одноимённые пакеты приложения.
+Из корня проекта: `python -m pytest -q`.
+На Windows с Python Launcher: `py -3.11 -m pytest -q`.

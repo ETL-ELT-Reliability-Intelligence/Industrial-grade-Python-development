@@ -39,7 +39,7 @@ def evaluate_quality(
         seen.add(result.check_id)
         rule = configured.get(result.check_id)
         if rule is None:
-            rule = PolicyRule(result.check_id)
+            rule = PolicyRule(check_id=result.check_id)
         if result.status is CheckStatus.PASS:
             reaction = QualityStatus.PASS
         elif result.status is CheckStatus.FAIL:
@@ -56,7 +56,7 @@ def evaluate_quality(
 
     if not reasons:
         return QualityDecision(
-            QualityStatus.WARN,
-            (DecisionReason("no_checks", "No check results were supplied."),),
+            status=QualityStatus.WARN,
+            reasons=(DecisionReason(code="no_checks", message="No check results were supplied."),),
         )
-    return QualityDecision(decision, tuple(reasons))
+    return QualityDecision(status=decision, reasons=tuple(reasons))

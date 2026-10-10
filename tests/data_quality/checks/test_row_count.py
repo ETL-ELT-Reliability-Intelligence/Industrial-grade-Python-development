@@ -18,8 +18,8 @@ class RowCountCheckTests(unittest.TestCase):
             (0, 0, 0, "requirement_met"), (5, 5, 5, "requirement_met"),
         ):
             with self.subTest(count=count, minimum=minimum, maximum=maximum):
-                result = check_row_count(RowCountObservation(count),
-                                         RowCountConstraint(minimum, maximum), check_id="rows")
+                result = check_row_count(RowCountObservation(row_count=count),
+                                         RowCountConstraint(min_count=minimum, max_count=maximum), check_id="rows")
                 self.assertEqual(result.reason_code, code)
                 self.assertIs(result.status, CheckStatus.PASS if code == "requirement_met"
                               else CheckStatus.FAIL)

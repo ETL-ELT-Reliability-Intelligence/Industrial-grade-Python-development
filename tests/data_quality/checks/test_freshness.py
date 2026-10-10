@@ -16,14 +16,14 @@ class FreshnessCheckTests(unittest.TestCase):
                               (61, CheckStatus.FAIL)):
             with self.subTest(age=age):
                 result = check_freshness(
-                    FreshnessObservation(now - timedelta(seconds=age), now),
-                    FreshnessConstraint(timedelta(seconds=60)), check_id="freshness",
+                    FreshnessObservation(last_updated_at=now - timedelta(seconds=age), evaluated_at=now),
+                    FreshnessConstraint(max_age=timedelta(seconds=60)), check_id="freshness",
                 )
                 self.assertIs(result.status, expected)
                 self.assertEqual(result.reason_code, "threshold_exceeded" if age > 60
                                  else "requirement_met")
         self.assertIs(check_freshness(
-            FreshnessObservation(now, now), FreshnessConstraint(timedelta(0)),
+            FreshnessObservation(last_updated_at=now, evaluated_at=now), FreshnessConstraint(max_age=timedelta(0)),
             check_id="freshness",
         ).status, CheckStatus.PASS)
 
@@ -32,7 +32,7 @@ class FreshnessCheckTests(unittest.TestCase):
         now = datetime(2026, 10, 4, tzinfo=timezone.utc)
         updated = now.astimezone(timezone(timedelta(hours=3)))
         result = check_freshness(
-            FreshnessObservation(updated, now), FreshnessConstraint(timedelta(0)),
+            FreshnessObservation(last_updated_at=updated, evaluated_at=now), FreshnessConstraint(max_age=timedelta(0)),
             check_id="freshness",
         )
         self.assertIs(result.status, CheckStatus.PASS)
