@@ -28,12 +28,12 @@ def check_schema(
         expected = {field.name: field.data_type for field in constraint.fields}
         for name in sorted(actual.keys() | expected.keys()):
             if name not in actual:
-                details.append(CheckDetail("missing_field", name, expected[name]))
+                details.append(CheckDetail(code="missing_field", field=name, expected=expected[name]))
             elif name not in expected:
                 if not constraint.allow_extra_fields:
-                    details.append(CheckDetail("unexpected_field", name, actual=actual[name]))
+                    details.append(CheckDetail(code="unexpected_field", field=name, actual=actual[name]))
             elif actual[name] != expected[name]:
-                details.append(CheckDetail("type_mismatch", name, expected[name], actual[name]))
+                details.append(CheckDetail(code="type_mismatch", field=name, expected=expected[name], actual=actual[name]))
         if details:
             status, code = CheckStatus.FAIL, "schema_mismatch"
             message = f"Schema has {len(details)} field mismatch(es)."

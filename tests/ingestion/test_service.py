@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from uuid import UUID
 
 import pytest
 
@@ -40,6 +41,9 @@ def test_ingest_publishes_dataset_ingested(service, publisher):
     assert event.records == 100
     assert event.received_at == NOW
     assert event.schema_version == 1
+    assert isinstance(event.event_id, UUID)
+    assert event.contract_version == 1
+    assert event.raw_uri is not None
     assert publisher.events == [event]
 
 
@@ -66,6 +70,10 @@ def test_schema_change_emits_event_and_bumps_version(service, publisher):
     assert event.schema_version == 2
     changed = [e for e in publisher.events if isinstance(e, SchemaChangedEvent)]
     assert [(e.previous_version, e.new_version) for e in changed] == [(1, 2)]
+    assert changed[0].batch_id == event.batch_id
+    assert changed[0].detected_at == NOW
+    assert changed[0].event_id != event.event_id
+    assert parse_event(changed[0].model_dump_json()) == changed[0]
 
 
 def test_unchanged_schema_emits_no_schema_event(service, publisher):

@@ -16,8 +16,8 @@ class NullRateCheckTests(unittest.TestCase):
             (1, 1, CheckStatus.PASS),
         ):
             with self.subTest(value=value, maximum=maximum):
-                result = check_null_rate(NullRateObservation(value),
-                                         NullRateConstraint(maximum), check_id="nulls")
+                result = check_null_rate(NullRateObservation(null_rate=value),
+                                         NullRateConstraint(max_null_rate=maximum), check_id="nulls")
                 self.assertIs(result.status, expected)
                 self.assertEqual(result.reason_code, "threshold_exceeded"
                                  if expected is CheckStatus.FAIL else "requirement_met")

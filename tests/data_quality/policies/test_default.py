@@ -15,11 +15,11 @@ class QualityPolicyTests(unittest.TestCase):
 
     def setUp(self):
         """Create passing, failing, and unavailable results with distinct IDs."""
-        self.passed = check_row_count(RowCountObservation(1), RowCountConstraint(min_count=1),
+        self.passed = check_row_count(RowCountObservation(row_count=1), RowCountConstraint(min_count=1),
                                      check_id="passed")
-        self.failed = check_row_count(RowCountObservation(0), RowCountConstraint(min_count=1),
+        self.failed = check_row_count(RowCountObservation(row_count=0), RowCountConstraint(min_count=1),
                                      check_id="failed")
-        self.unknown = check_row_count(RowCountObservation(None), RowCountConstraint(min_count=1),
+        self.unknown = check_row_count(RowCountObservation(row_count=None), RowCountConstraint(min_count=1),
                                       check_id="unknown")
 
     def test_defaults(self):
@@ -37,16 +37,16 @@ class QualityPolicyTests(unittest.TestCase):
     def test_reactions_can_be_overridden(self):
         """Apply overrides to the configured check ID and leave successes passing."""
         self.assertIs(evaluate_quality([self.failed], [
-            PolicyRule("failed", on_fail=QualityStatus.WARN),
+            PolicyRule(check_id="failed", on_fail=QualityStatus.WARN),
         ]).status, QualityStatus.WARN)
         self.assertIs(evaluate_quality([self.unknown], [
-            PolicyRule("unknown", on_unknown=QualityStatus.BLOCK),
+            PolicyRule(check_id="unknown", on_unknown=QualityStatus.BLOCK),
         ]).status, QualityStatus.BLOCK)
         self.assertIs(evaluate_quality([self.passed], [
-            PolicyRule("passed", on_unknown=QualityStatus.BLOCK),
+            PolicyRule(check_id="passed", on_unknown=QualityStatus.BLOCK),
         ]).status, QualityStatus.PASS)
         self.assertIs(evaluate_quality([self.failed], [
-            PolicyRule("another_check", on_fail=QualityStatus.WARN),
+            PolicyRule(check_id="another_check", on_fail=QualityStatus.WARN),
         ]).status, QualityStatus.BLOCK)
 
     def test_precedence_is_independent_of_result_order(self):
@@ -71,7 +71,7 @@ class QualityPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate check result"):
             evaluate_quality([self.passed, self.passed])
         with self.assertRaisesRegex(ValueError, "duplicate policy rule"):
-            evaluate_quality([self.passed], [PolicyRule("passed"), PolicyRule("passed")])
+            evaluate_quality([self.passed], [PolicyRule(check_id="passed"), PolicyRule(check_id="passed")])
 
     def test_policy_rejects_untyped_inputs(self):
         """Require contract objects rather than transport dictionaries."""
@@ -82,7 +82,7 @@ class QualityPolicyTests(unittest.TestCase):
 
     def test_policy_accepts_rule_generators_and_is_repeatable(self):
         """Consume iterable rules without retaining mutable policy state."""
-        rules = (PolicyRule("failed", on_fail=QualityStatus.WARN),)
+        rules = (PolicyRule(check_id="failed", on_fail=QualityStatus.WARN),)
         expected = evaluate_quality([self.failed], rules)
         self.assertEqual(evaluate_quality([self.failed], iter(rules)), expected)
         self.assertIs(evaluate_quality([self.failed]).status, QualityStatus.BLOCK)

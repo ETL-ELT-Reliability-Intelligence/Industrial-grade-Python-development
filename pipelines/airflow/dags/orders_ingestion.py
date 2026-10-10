@@ -26,7 +26,10 @@ def _publisher():
 
 
 def _on_failure(context) -> None:
-    PipelineRunReporter(_publisher()).failed(PIPELINE_ID, context["run_id"], str(context.get("exception")))
+    PipelineRunReporter(_publisher()).failed(
+        PIPELINE_ID, context["run_id"], str(context.get("exception")),
+        started_at=context["dag_run"].start_date,
+    )
 
 
 @dag(
