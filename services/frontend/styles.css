@@ -86,3 +86,23 @@ footer { border-top: 1px solid #aaa; padding-top: 8px; color: var(--muted); font
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .demo-banner { gap: 3px; }
 }
+
+/* Dataset-specific content; layout and controls above are the original demo CSS. */
+.muted { color: var(--muted); font-size: 11px; margin: 4px 0; overflow-wrap: anywhere; }
+.message { padding: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.error { color: #a00000; }
+.pager { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 0; }
+#catalog .pager { padding: 8px; }
+.pager span { color: var(--muted); font-size: 11px; }
+.evidence { margin: 0; min-width: 100px; }
+dt { color: var(--muted); font-size: 11px; }
+dd { margin: 0 0 4px; overflow-wrap: anywhere; }
+.scope-label, code { overflow-wrap: anywhere; }
+.status-pass { color: #205b2d; }
+.status-fail, .status-block { color: #a00000; }
+.status-unknown, .status-warn { color: #714800; }
+.button.selected { background: var(--blue); color: var(--light); }
+.decision h3 { margin-top: 0; }
+#dataset-detail { min-width: 0; }
+#dataset-detail > .detail-section { margin-top: 12px; }
+#dataset-detail .table-wrap { max-width: 100%; }

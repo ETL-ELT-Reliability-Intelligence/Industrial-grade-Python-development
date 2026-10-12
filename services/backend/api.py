@@ -1,35 +1,55 @@
-"""HTTP routing, request validation and translation of application results."""
+"""Typed HTTP boundary for dataset and quality queries."""
 
+from collections.abc import Iterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, Request
 
-from .models import Incident, IncidentList, IncidentStatus, Overview
-from .queries import IncidentQueries
+from contracts.state import Batch
+from .models import Dataset, Page, QualityScope, ScopeQuality
+from .queries import DatasetQueries
+from .repository import ReadRepository
 
-router = APIRouter(prefix="/api/v1", tags=["incidents"])
-
-
-def get_queries(request: Request) -> IncidentQueries:
-    return IncidentQueries(request.app.state.repository)
+router = APIRouter(prefix="/api/v1", tags=["datasets"])
 
 
-Queries = Annotated[IncidentQueries, Depends(get_queries)]
+def get_repository(request: Request) -> Iterator[ReadRepository]:
+    with request.app.state.repository_factory() as repository:
+        yield repository
 
 
-@router.get("/overview", response_model=Overview)
-def overview(queries: Queries) -> Overview:
-    return queries.overview()
+Repository = Annotated[ReadRepository, Depends(get_repository)]
 
 
-@router.get("/incidents", response_model=IncidentList)
-def incidents(queries: Queries, status: IncidentStatus | None = None) -> IncidentList:
-    return queries.list_incidents(status)
+def get_queries(repository: Repository) -> DatasetQueries:
+    return DatasetQueries(repository)
 
 
-@router.get("/incidents/{incident_id}", response_model=Incident)
-def incident(incident_id: str, queries: Queries) -> Incident:
-    item = queries.get_incident(incident_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Incident not found")
-    return item
+Queries = Annotated[DatasetQueries, Depends(get_queries)]
+Limit = Annotated[int, Query(ge=1, le=200)]
+Offset = Annotated[int, Query(ge=0)]
+
+
+@router.get("/datasets", response_model=Page[Dataset])
+def datasets(queries: Queries, limit: Limit = 50, offset: Offset = 0):
+    return queries.datasets(limit, offset)
+
+
+@router.get("/datasets/{dataset_id}", response_model=Dataset)
+def dataset(dataset_id: str, queries: Queries):
+    return queries.dataset(dataset_id)
+
+
+@router.get("/datasets/{dataset_id}/batches", response_model=Page[Batch])
+def batches(dataset_id: str, queries: Queries, limit: Limit = 50, offset: Offset = 0):
+    return queries.batches(dataset_id, limit, offset)
+
+
+@router.get("/datasets/{dataset_id}/quality-scopes", response_model=Page[QualityScope])
+def scopes(dataset_id: str, queries: Queries, limit: Limit = 50, offset: Offset = 0):
+    return queries.scopes(dataset_id, limit, offset)
+
+
+@router.get("/datasets/{dataset_id}/quality", response_model=ScopeQuality)
+def quality(dataset_id: str, queries: Queries, scope_id: Annotated[str, Query(min_length=1, pattern=r"\S")]):
+    return queries.quality(dataset_id, scope_id)

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reliability Intelligence — Инциденты</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <header class="sidebar">
+    <div class="title-bar"><span class="brand-mark">RI</span> Reliability Intelligence — мониторинг ETL/ELT</div>
+    <nav class="menu-bar" aria-label="Основная навигация">
+      <a class="nav-item active" href="/" aria-current="page">Обзор инцидентов</a>
+      <a class="nav-item" href="/docs" target="_blank" rel="noopener">Документация API</a>
+    </nav>
+  </header>
+  <main>
+    <header class="page-header">
+      <div><h1>Надёжность данных</h1><p class="subtitle">Состояние инцидентов ETL/ELT-платформы.</p></div>
+      <button id="refresh" type="button" class="button">Обновить данные</button>
+    </header>
+    <div class="demo-banner"><strong>Демонстрационные данные</strong><span>Фиксированный сценарий. Подключение к платформе ещё не настроено.</span></div>
+    <p id="snapshot" class="snapshot">Загрузка состояния…</p>
+    <section id="overview" class="stats" aria-label="Обзор состояния" aria-live="polite"></section>
+    <div class="workspace">
+      <section class="panel incidents-panel" aria-labelledby="incidents-heading">
+        <div class="panel-header"><h2 id="incidents-heading">Инциденты</h2><span id="incident-count" class="count">—</span></div>
+        <div class="filter"><label for="status">Статус</label><select id="status"><option value="">Все статусы</option><option value="open">Открытые</option><option value="investigating">В расследовании</option><option value="resolved">Закрытые</option></select></div>
+        <div id="incident-list" aria-live="polite" aria-busy="true"><p class="state-message">Загрузка инцидентов…</p></div>
+      </section>
+      <section id="incident-detail" class="panel detail-panel" aria-label="Карточка инцидента" aria-live="polite"><div class="empty-detail"><h2>Выберите инцидент</h2><p>Здесь появятся наблюдения, гипотезы и зона влияния.</p></div></section>
+    </div>
+    <footer>Кандидаты причин — гипотезы. Потенциальное влияние требует проверки.</footer>
+  </main>
+</body>
+</html>

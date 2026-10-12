@@ -1,35 +1,29 @@
-"""Replace this read adapter with PostgreSQL when the upstream contract is agreed."""
+"""Application-owned read interface, separate from upstream write repositories."""
 
-import json
-from datetime import datetime
-from pathlib import Path
 from typing import Protocol
 
-from .models import Incident
+from contracts.state import Batch
+
+from .models import Dataset, QualityScope, ScopeQuality
 
 
-class IncidentRepository(Protocol):
-    data_mode: str
-    snapshot_at: datetime
-
-    def list_incidents(self) -> list[Incident]: ...
-
-    def get_incident(self, incident_id: str) -> Incident | None: ...
+class StorageUnavailable(Exception):
+    """Storage is not configured, reachable, or ready for these queries."""
 
 
-class DemoIncidentRepository:
-    data_mode = "demo"
+class DatasetNotFound(Exception):
+    """The requested dataset is absent from the catalog."""
 
-    def __init__(self, fixture_path: Path | None = None) -> None:
-        path = fixture_path or Path(__file__).with_name("demo.json")
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        self.snapshot_at = datetime.fromisoformat(payload["snapshot_at"])
-        self._incidents = {
-            item["id"]: Incident.model_validate(item) for item in payload["incidents"]
-        }
 
-    def list_incidents(self) -> list[Incident]:
-        return sorted(self._incidents.values(), key=lambda item: item.detected_at, reverse=True)
+class ReadRepository(Protocol):
+    def ready(self) -> None: ...
 
-    def get_incident(self, incident_id: str) -> Incident | None:
-        return self._incidents.get(incident_id)
+    def list_datasets(self, limit: int, offset: int) -> list[Dataset]: ...
+
+    def get_dataset(self, dataset_id: str) -> Dataset | None: ...
+
+    def list_batches(self, dataset_id: str, limit: int, offset: int) -> list[Batch]: ...
+
+    def list_quality_scopes(self, dataset_id: str, limit: int, offset: int) -> list[QualityScope]: ...
+
+    def get_quality(self, dataset_id: str, scope_id: str) -> ScopeQuality: ...

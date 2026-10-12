@@ -3,35 +3,45 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Reliability Intelligence — Инциденты</title>
-  <link rel="stylesheet" href="/assets/styles.css">
-  <script src="/assets/app.js" defer></script>
+  <title>Datasets и качество — Reliability Intelligence</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=classic-layout-2">
+  <script src="/assets/app.js?v=classic-layout-2" defer></script>
 </head>
 <body>
   <header class="sidebar">
     <div class="title-bar"><span class="brand-mark">RI</span> Reliability Intelligence — мониторинг ETL/ELT</div>
     <nav class="menu-bar" aria-label="Основная навигация">
-      <a class="nav-item active" href="/" aria-current="page">Обзор инцидентов</a>
+      <a class="nav-item active" href="/" aria-current="page">Datasets и качество</a>
       <a class="nav-item" href="/docs" target="_blank" rel="noopener">Документация API</a>
     </nav>
   </header>
   <main>
     <header class="page-header">
-      <div><h1>Надёжность данных</h1><p class="subtitle">Состояние инцидентов ETL/ELT-платформы.</p></div>
+      <div><h1>Надёжность данных</h1><p class="subtitle">Datasets, загрузки и результаты проверок качества.</p></div>
       <button id="refresh" type="button" class="button">Обновить данные</button>
     </header>
-    <div class="demo-banner"><strong>Демонстрационные данные</strong><span>Фиксированный сценарий. Подключение к платформе ещё не настроено.</span></div>
-    <p id="snapshot" class="snapshot">Загрузка состояния…</p>
-    <section id="overview" class="stats" aria-label="Обзор состояния" aria-live="polite"></section>
+    <p id="refreshed-at" class="snapshot" role="status">Данные ещё не загружены.</p>
     <div class="workspace">
-      <section class="panel incidents-panel" aria-labelledby="incidents-heading">
-        <div class="panel-header"><h2 id="incidents-heading">Инциденты</h2><span id="incident-count" class="count">—</span></div>
-        <div class="filter"><label for="status">Статус</label><select id="status"><option value="">Все статусы</option><option value="open">Открытые</option><option value="investigating">В расследовании</option><option value="resolved">Закрытые</option></select></div>
-        <div id="incident-list" aria-live="polite" aria-busy="true"><p class="state-message">Загрузка инцидентов…</p></div>
+      <section class="panel" aria-labelledby="catalog-heading">
+        <div class="panel-header"><h2 id="catalog-heading">Datasets</h2></div>
+        <div id="catalog" aria-live="polite"></div>
       </section>
-      <section id="incident-detail" class="panel detail-panel" aria-label="Карточка инцидента" aria-live="polite"><div class="empty-detail"><h2>Выберите инцидент</h2><p>Здесь появятся наблюдения, гипотезы и зона влияния.</p></div></section>
+      <section id="dataset-detail" class="panel detail-panel" aria-label="Карточка dataset">
+        <div id="dataset" aria-live="polite"></div>
+        <section class="detail-section" aria-labelledby="batches-heading">
+          <h3 id="batches-heading">Загрузки</h3>
+          <div id="batches" aria-live="polite"></div>
+        </section>
+        <section class="detail-section" aria-labelledby="scopes-heading">
+          <h3 id="scopes-heading">Области проверки качества</h3>
+          <div id="scopes" aria-live="polite"></div>
+        </section>
+        <section class="detail-section" aria-labelledby="quality-heading">
+          <h3 id="quality-heading">Результаты выбранной области</h3><div id="quality" aria-live="polite"></div>
+        </section>
+      </section>
     </div>
-    <footer>Кандидаты причин — гипотезы. Потенциальное влияние требует проверки.</footer>
+    <footer>Отсутствие проверок или решения не означает успешное прохождение качества.</footer>
   </main>
 </body>
 </html>

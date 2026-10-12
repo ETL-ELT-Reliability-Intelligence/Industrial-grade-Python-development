@@ -1,212 +1,262 @@
 "use strict";
 
-const statusLabels = { open: "Открыт", investigating: "В расследовании", resolved: "Закрыт" };
-const severityLabels = { critical: "Критический", warning: "Предупреждение", info: "Информация" };
-const number = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
-const date = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" });
-const list = document.querySelector("#incident-list");
-const detail = document.querySelector("#incident-detail");
-const overview = document.querySelector("#overview");
-const filter = document.querySelector("#status");
-let selectedId = null;
-let listController;
-let detailController;
-let overviewController;
+const PAGE_SIZE = 50;
+const panels = Object.fromEntries(["catalog", "dataset", "batches", "scopes", "quality"].map(key => [key, document.getElementById(key)]));
+const pending = new Map();
+const offsets = { catalog: 0, batches: 0, scopes: 0 };
+let selection = readSelection();
+const dates = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" });
+const numbers = new Intl.NumberFormat("ru-RU");
 
-// API text always enters the DOM as text, never as HTML.
-function element(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
+function node(tag, text, className) {
+  const item = document.createElement(tag);
+  if (text !== undefined) item.textContent = text;
+  if (className) item.className = className;
+  return item;
 }
 
-async function request(path, signal) {
-  const response = await fetch(`/api/v1${path}`, { signal });
-  if (!response.ok) throw new Error(response.status === 404 ? "Инцидент не найден." : `API вернул ошибку ${response.status}.`);
-  return response.json();
+function button(text, handler) {
+  const item = node("button", text, "button");
+  item.type = "button";
+  item.addEventListener("click", handler);
+  return item;
 }
 
-function showError(container, error, retry) {
-  const box = element("div", "error-state");
-  box.setAttribute("role", "alert");
-  box.append(element("p", "", error.message === "Failed to fetch" ? "Не удалось подключиться к API." : error.message));
-  const button = element("button", "button", "Повторить");
-  button.type = "button";
-  button.addEventListener("click", retry);
-  box.append(button);
-  container.replaceChildren(box);
+function timestamp(value) {
+  if (!value) return node("span", "Не указано", "muted");
+  const item = node("time", dates.format(new Date(value)));
+  item.dateTime = value;
+  item.title = value;
+  return item;
 }
 
-function badge(text, type) { return element("span", `badge ${type}`, text); }
-function section(title) {
-  const box = element("section", "detail-section");
-  box.append(element("h3", "", title));
-  return box;
+function readSelection() {
+  const params = new URLSearchParams(location.search);
+  return { dataset: params.get("dataset"), scope: params.get("scope") };
 }
 
-async function loadOverview() {
-  overviewController?.abort();
-  const controller = overviewController = new AbortController();
-  overview.replaceChildren(element("p", "state-message", "Загрузка обзора…"));
-  document.querySelector("#snapshot").textContent = "Загрузка состояния…";
+function select(dataset, scope = null) {
+  const url = new URL(location.href);
+  url.search = "";
+  if (dataset) url.searchParams.set("dataset", dataset);
+  if (dataset && scope) url.searchParams.set("scope", scope);
+  history.pushState(null, "", url);
+  applySelection();
+}
+
+function applySelection() {
+  const previous = selection;
+  selection = readSelection();
+  if (selection.dataset !== previous.dataset) {
+    offsets.batches = offsets.scopes = 0;
+    loadDataset(); loadBatches(); loadScopes();
+  }
+  markSelection();
+  loadQuality();
+}
+
+function markSelection() {
+  document.querySelectorAll("[data-dataset], [data-scope]").forEach(item => {
+    const selected = item.hasAttribute("data-dataset")
+      ? item.dataset.dataset === selection.dataset : item.dataset.scope === selection.scope;
+    item.classList.toggle("selected", selected);
+    item.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+function cancel(key) {
+  pending.get(key)?.abort();
+  pending.delete(key);
+}
+
+function message(key, text) {
+  cancel(key);
+  panels[key].replaceChildren(node("p", text, "message"));
+  panels[key].setAttribute("aria-busy", "false");
+}
+
+async function load(key, path, render, retry) {
+  cancel(key);
+  const controller = new AbortController();
+  pending.set(key, controller);
+  const root = panels[key];
+  root.setAttribute("aria-busy", "true");
+  root.replaceChildren(node("p", "Загрузка…", "message"));
   try {
-    const data = await request("/overview", controller.signal);
-    const stats = [
-      ["Активные инциденты", data.active_incidents, ""],
-      ["Критические", data.critical_active_incidents, "critical"],
-      ["Затронутые datasets", data.affected_datasets, ""],
-      ["Закрытые инциденты", data.resolved_incidents, ""],
-    ];
-    overview.replaceChildren(...stats.map(([label, value, type]) => {
-      const box = element("div", "stat");
-      box.append(element("p", "stat-label", label), element("p", `stat-value ${type}`, number.format(value)));
-      return box;
-    }));
-    document.querySelector("#snapshot").textContent = `Снимок данных: ${date.format(new Date(data.snapshot_at))} · время вашего браузера · ${data.data_mode}`;
+    const response = await fetch(`/api/v1${path}`, { signal: controller.signal });
+    if (!response.ok) {
+      const descriptions = { 404: "Dataset не найден", 503: "Хранилище недоступно. Проверьте подключение backend к PostgreSQL" };
+      throw new Error(descriptions[response.status] || `Ошибка API (${response.status})`);
+    }
+    const data = await response.json();
+    if (pending.get(key) !== controller) return;
+    root.replaceChildren();
+    render(data, root);
+    markSelection();
+    document.getElementById("refreshed-at").textContent = `Последний успешный ответ API: ${dates.format(new Date())}. Это время загрузки экрана, а не свежесть исходных данных.`;
   } catch (error) {
-    if (error.name !== "AbortError") {
-      document.querySelector("#snapshot").textContent = "Снимок данных недоступен.";
-      showError(overview, error, loadOverview);
+    if (controller.signal.aborted || pending.get(key) !== controller) return;
+    const box = node("div", undefined, "message error");
+    box.setAttribute("role", "alert");
+    box.append(node("p", error instanceof TypeError ? "Не удалось связаться с API." : error.message), button("Повторить", retry));
+    root.replaceChildren(box);
+  } finally {
+    if (pending.get(key) === controller) {
+      root.setAttribute("aria-busy", "false");
+      pending.delete(key);
     }
   }
 }
 
-function markSelected() {
-  list.querySelectorAll(".incident-row").forEach(row => {
-    const selected = row.dataset.id === selectedId;
-    row.classList.toggle("selected", selected);
-    row.setAttribute("aria-pressed", String(selected));
-  });
+function pagination(root, data, key, reload) {
+  const bar = node("nav", undefined, "pager");
+  bar.setAttribute("aria-label", "Страницы списка");
+  const previous = button("Назад", () => { offsets[key] = Math.max(0, data.offset - data.limit); reload(); });
+  const next = button("Далее", () => { offsets[key] = data.offset + data.limit; reload(); });
+  previous.disabled = data.offset === 0;
+  next.disabled = !data.has_more;
+  bar.append(previous, node("span", `Страница ${Math.floor(data.offset / data.limit) + 1}`), next);
+  root.append(bar);
 }
 
-async function loadList() {
-  listController?.abort();
-  const controller = listController = new AbortController();
-  list.setAttribute("aria-busy", "true");
-  list.replaceChildren(element("p", "state-message", "Загрузка инцидентов…"));
-  document.querySelector("#incident-count").textContent = "—";
-  try {
-    const query = filter.value ? `?status=${encodeURIComponent(filter.value)}` : "";
-    const data = await request(`/incidents${query}`, controller.signal);
-    document.querySelector("#incident-count").textContent = number.format(data.total);
-    list.replaceChildren(...data.items.map(item => {
-      const row = element("button", "incident-row");
-      row.type = "button";
-      row.dataset.id = item.id;
-      const meta = element("div", "incident-meta");
-      meta.append(element("span", "", item.id), badge(severityLabels[item.severity], item.severity), element("span", "", statusLabels[item.status]));
-      row.append(meta, element("span", "incident-title", item.title), element("span", "incident-time", date.format(new Date(item.detected_at))));
-      row.addEventListener("click", () => {
-        if (location.hash === `#${encodeURIComponent(item.id)}`) loadDetail(item.id);
-        else location.hash = encodeURIComponent(item.id);
-      });
-      return row;
-    }));
-    if (!data.items.length) list.append(element("p", "state-message", "Инцидентов с этим статусом нет."));
-    markSelected();
-  } catch (error) {
-    if (error.name !== "AbortError") showError(list, error, loadList);
-  } finally {
-    if (listController === controller) list.setAttribute("aria-busy", "false");
-  }
-}
+function listPath(path, key) { return `${path}?limit=${PAGE_SIZE}&offset=${offsets[key]}`; }
+function datasetPath() { return `/datasets/${encodeURIComponent(selection.dataset)}`; }
 
-function renderIncident(item) {
-  const meta = element("div", "incident-meta");
-  meta.append(element("span", "", item.id), badge(severityLabels[item.severity], item.severity), element("span", "", statusLabels[item.status]));
-  const heading = element("h2", "detail-heading", item.title);
-  heading.tabIndex = -1;
-  detail.replaceChildren(heading, meta, element("p", "detail-summary", item.summary));
-
-  const causes = section("Возможная первопричина");
-  for (const candidate of item.root_cause_candidates) {
-    const box = element("div", "cause");
-    box.append(element("strong", "", candidate.dataset_id), element("p", "", candidate.description), element("p", "hint", `Оценка ранжирования: ${number.format(candidate.score)} / 1`));
-    causes.append(box);
-  }
-  if (!item.root_cause_candidates.length) causes.append(element("p", "hint", "Кандидаты причин пока не определены."));
-  causes.append(element("p", "hint", "Оценка алгоритма не доказывает причинность и не является вероятностью причины."));
-  detail.append(causes);
-
-  const observations = section("Наблюдения");
-  const wrap = element("div", "table-wrap");
-  const table = element("table");
-  const head = element("thead");
-  const headerRow = element("tr");
-  for (const label of ["Dataset / метрика", "Ожидалось", "Получено"]) headerRow.append(element("th", "", label));
-  head.append(headerRow);
-  const body = element("tbody");
-  for (const observation of item.observations) {
-    const row = element("tr");
-    const name = element("td");
-    name.append(element("strong", "", observation.dataset_id), element("div", "hint", `${observation.metric} · ${observation.unit}`));
-    row.append(name, element("td", "", number.format(observation.expected)), element("td", "", number.format(observation.actual)));
+function table(headers, rows) {
+  const wrap = node("div", undefined, "table-wrap");
+  const grid = node("table");
+  const head = node("thead");
+  const tr = node("tr");
+  headers.forEach(label => { const th = node("th", label); th.scope = "col"; tr.append(th); });
+  head.append(tr);
+  const body = node("tbody");
+  rows.forEach(cells => {
+    const row = node("tr");
+    cells.forEach(value => { const cell = node("td"); cell.append(value instanceof Node ? value : node("span", String(value))); row.append(cell); });
     body.append(row);
-  }
-  table.append(head, body);
-  wrap.append(table);
-  observations.append(wrap);
-  if (!item.observations.length) observations.append(element("p", "hint", "Наблюдения пока отсутствуют."));
-  detail.append(observations);
-
-  const impact = section("Потенциальная зона влияния");
-  for (const [label, ids] of [["Datasets", item.impact.potential_dataset_ids], ["Pipelines", item.impact.potential_pipeline_ids], ["Dashboards", item.impact.potential_dashboard_ids]]) {
-    impact.append(element("p", "hint", label));
-    const chips = element("div", "chips");
-    chips.append(...(ids.length ? ids.map(id => element("span", "chip", id)) : [element("span", "hint", "Не указаны")]));
-    impact.append(chips);
-  }
-  detail.append(impact);
-
-  const timeline = section("Хронология");
-  const events = element("ol", "timeline");
-  for (const event of item.timeline) {
-    const row = element("li");
-    const time = element("time", "", date.format(new Date(event.at)));
-    time.dateTime = event.at;
-    row.append(time, element("span", "", event.description));
-    events.append(row);
-  }
-  timeline.append(events);
-  detail.append(timeline);
-  heading.focus({ preventScroll: true });
+  });
+  grid.append(head, body); wrap.append(grid);
+  return wrap;
 }
 
-async function loadDetail(id) {
-  detailController?.abort();
-  const controller = detailController = new AbortController();
-  selectedId = id;
-  markSelected();
-  detail.setAttribute("aria-busy", "true");
-  if (!id) {
-    detail.replaceChildren(element("p", "state-message", "Выберите инцидент в списке."));
-    detail.setAttribute("aria-busy", "false");
-    return;
-  }
-  detail.replaceChildren(element("p", "state-message", "Загрузка карточки…"));
-  try {
-    renderIncident(await request(`/incidents/${encodeURIComponent(id)}`, controller.signal));
-  } catch (error) {
-    if (error.name !== "AbortError") showError(detail, error, () => loadDetail(id));
-  } finally {
-    if (detailController === controller) detail.setAttribute("aria-busy", "false");
-  }
+function loadCatalog() {
+  return load("catalog", listPath("/datasets", "catalog"), (data, root) => {
+    for (const item of data.items) {
+      const entry = button(item.dataset_id, () => select(item.dataset_id));
+      entry.className = "catalog-item incident-row";
+      entry.setAttribute("aria-label", item.dataset_id);
+      entry.dataset.dataset = item.dataset_id;
+      const registered = node("span", "Зарегистрирован: ", "incident-time");
+      registered.append(timestamp(item.created_at));
+      entry.replaceChildren(node("strong", item.dataset_id, "incident-title"), registered);
+      root.append(entry);
+    }
+    if (!data.items.length) root.append(node("p", "На этой странице нет зарегистрированных datasets.", "message"));
+    pagination(root, data, "catalog", loadCatalog);
+  }, loadCatalog);
 }
 
-function idFromHash() {
-  try { return decodeURIComponent(location.hash.slice(1)) || null; }
-  catch { return location.hash.slice(1); }
+function loadDataset() {
+  if (!selection.dataset) return message("dataset", "Выберите dataset в каталоге.");
+  return load("dataset", datasetPath(), (data, root) => {
+    root.append(node("h2", data.dataset_id, "detail-heading"));
+    const registered = node("p", "Зарегистрирован: ", "muted");
+    registered.append(timestamp(data.created_at)); root.append(registered);
+    if (data.dataset_id.startsWith("sample-app-")) {
+      const banner = node("div", undefined, "demo-banner");
+      banner.append(node("strong", "Тестовые данные"), node("span", "Добавлены вручную для просмотра приложения."));
+      root.append(banner);
+    }
+  }, loadDataset);
 }
 
-filter.addEventListener("change", loadList);
-window.addEventListener("hashchange", () => loadDetail(idFromHash()));
-document.querySelector("#refresh").addEventListener("click", async () => {
-  const button = document.querySelector("#refresh");
-  button.disabled = true;
-  try { await Promise.all([loadOverview(), loadList(), loadDetail(selectedId)]); }
-  finally { button.disabled = false; }
+function loadBatches() {
+  if (!selection.dataset) return message("batches", "Сначала выберите dataset.");
+  return load("batches", listPath(`${datasetPath()}/batches`, "batches"), (data, root) => {
+    if (data.items.length) root.append(table(["Batch ID", "Строк", "Получен", "Версия схемы"], data.items.map(item => [
+      item.batch_id, numbers.format(item.records), timestamp(item.received_at), item.schema_version,
+    ])));
+    else root.append(node("p", "На этой странице нет сохранённых загрузок.", "message"));
+    pagination(root, data, "batches", loadBatches);
+  }, loadBatches);
+}
+
+function loadScopes() {
+  if (!selection.dataset) return message("scopes", "Сначала выберите dataset.");
+  return load("scopes", listPath(`${datasetPath()}/quality-scopes`, "scopes"), (data, root) => {
+    if (data.items.length) root.append(table(["Scope ID", "Последняя сохранённая проверка / решение"], data.items.map(item => {
+      const choice = button(item.scope_id, () => select(selection.dataset, item.scope_id));
+      choice.dataset.scope = item.scope_id;
+      return [choice, timestamp(item.last_saved_at)];
+    })));
+    else root.append(node("p", "На этой странице нет областей с сохранёнными результатами качества.", "message"));
+    pagination(root, data, "scopes", loadScopes);
+  }, loadScopes);
+}
+
+const labels = {
+  row_count: "Число строк", null_rate: "Доля null", min_count: "Минимум строк", max_count: "Максимум строк",
+  max_null_rate: "Максимальная доля null", last_updated_at: "Последнее обновление", evaluated_at: "Момент проверки",
+  max_age: "Допустимый возраст (ISO 8601)", fields: "Поля схемы", name: "Имя", data_type: "Тип данных", allow_extra_fields: "Дополнительные поля разрешены",
+};
+
+function evidence(value) {
+  if (value === null || value === undefined) return node("span", "Нет значения", "muted");
+  if (Array.isArray(value)) {
+    if (!value.length) return node("span", "Пустой список", "muted");
+    const list = node("ul");
+    value.forEach(item => { const li = node("li"); li.append(evidence(item)); list.append(li); });
+    return list;
+  }
+  if (typeof value === "object") {
+    const dl = node("dl", undefined, "evidence");
+    for (const [key, item] of Object.entries(value)) {
+      const dd = node("dd");
+      dd.append(item && ["last_updated_at", "evaluated_at"].includes(key) ? timestamp(item) : evidence(item));
+      dl.append(node("dt", labels[key] || key), dd);
+    }
+    return dl;
+  }
+  return node("span", typeof value === "number" ? numbers.format(value) : typeof value === "boolean" ? (value ? "Да" : "Нет") : String(value));
+}
+
+function badge(status) { return node("span", status, `badge status-${status.toLowerCase()}`); }
+
+function renderQuality(data, root) {
+  root.append(node("p", `Scope: ${data.scope_id}`, "scope-label"));
+  const decision = node("div", undefined, "decision cause");
+  decision.append(node("h3", "Сохранённое решение policy"));
+  if (data.decision) {
+    decision.append(badge(data.decision.status));
+    const at = node("p", "Время решения: ", "muted"); at.append(timestamp(data.decided_at)); decision.append(at);
+    const reasons = node("ul");
+    data.decision.reasons.forEach(reason => reasons.append(node("li", `${reason.code}${reason.check_id ? ` · ${reason.check_id}` : ""}: ${reason.message}`)));
+    decision.append(reasons);
+  } else decision.append(node("p", "Решение ещё не сохранено. Это не PASS.", "message"));
+  root.append(decision, node("h3", "Проверки"), node("p", "PASS — соответствует; FAIL — не соответствует; UNKNOWN — недостаточно наблюдений. Решения policy: PASS, WARN или BLOCK.", "muted"));
+  if (!data.checks.length) { root.append(node("p", "Проверки для этой области не сохранены.", "message")); return; }
+  const rows = data.checks.map(stored => {
+    const result = stored.result;
+    const identity = node("div");
+    identity.append(node("strong", result.check_id), node("p", result.kind, "muted"), node("p", `Колонка: ${result.context?.column ?? "Весь dataset"}`, "muted"));
+    const diagnostic = node("div");
+    diagnostic.append(node("p", result.reason_code), node("p", result.message));
+    if (result.details.length) diagnostic.append(evidence(result.details));
+    return [identity, badge(result.status), evidence(result.observation), evidence(result.constraint), diagnostic, timestamp(stored.recorded_at)];
+  });
+  root.append(table(["Проверка", "Результат", "Наблюдение", "Ограничение", "Диагностика", "Сохранено"], rows));
+}
+
+function loadQuality() {
+  if (!selection.dataset || !selection.scope) return message("quality", "Выберите область проверки. Она не выбирается автоматически по последней загрузке.");
+  return load("quality", `${datasetPath()}/quality?${new URLSearchParams({ scope_id: selection.scope })}`, renderQuality, loadQuality);
+}
+
+function refresh() { return Promise.all([loadCatalog(), loadDataset(), loadBatches(), loadScopes(), loadQuality()]); }
+document.getElementById("refresh").addEventListener("click", async event => {
+  const control = event.currentTarget;
+  control.disabled = true;
+  try { await refresh(); } finally { control.disabled = false; }
 });
-loadOverview();
-loadList();
-if (location.hash) loadDetail(idFromHash());
+window.addEventListener("popstate", applySelection);
+refresh();
