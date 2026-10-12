@@ -1,36 +1,40 @@
-"""Application queries over the upstream read model, independent of HTTP."""
+"""Read use cases: existence checks and bounded list envelopes, no quality policy."""
 
-from .models import Incident, IncidentList, IncidentStatus, IncidentSummary, Overview, Severity
-from .repository import IncidentRepository
+from typing import TypeVar
+
+from contracts.state import Batch
+
+from .models import Dataset, Page, QualityScope, ScopeQuality
+from .repository import DatasetNotFound, ReadRepository
+
+T = TypeVar("T")
 
 
-class IncidentQueries:
-    def __init__(self, repository: IncidentRepository) -> None:
+def page(items: list[T], limit: int, offset: int) -> Page[T]:
+    return Page(items=items[:limit], limit=limit, offset=offset, has_more=len(items) > limit)
+
+
+class DatasetQueries:
+    def __init__(self, repository: ReadRepository) -> None:
         self.repository = repository
 
-    def overview(self) -> Overview:
-        incidents = self.repository.list_incidents()
-        active = [item for item in incidents if item.status != IncidentStatus.RESOLVED]
-        return Overview(
-            active_incidents=len(active),
-            critical_active_incidents=sum(item.severity == Severity.CRITICAL for item in active),
-            resolved_incidents=len(incidents) - len(active),
-            affected_datasets=len({dataset for item in active for dataset in item.affected_dataset_ids}),
-            data_mode=self.repository.data_mode,
-            snapshot_at=self.repository.snapshot_at,
-        )
+    def datasets(self, limit: int, offset: int) -> Page[Dataset]:
+        return page(self.repository.list_datasets(limit + 1, offset), limit, offset)
 
-    def list_incidents(self, status: IncidentStatus | None = None) -> IncidentList:
-        items = [
-            item for item in self.repository.list_incidents()
-            if status is None or item.status == status
-        ]
-        return IncidentList(
-            items=[IncidentSummary.model_validate(item.model_dump()) for item in items],
-            total=len(items),
-            data_mode=self.repository.data_mode,
-            snapshot_at=self.repository.snapshot_at,
-        )
+    def dataset(self, dataset_id: str) -> Dataset:
+        item = self.repository.get_dataset(dataset_id)
+        if item is None:
+            raise DatasetNotFound
+        return item
 
-    def get_incident(self, incident_id: str) -> Incident | None:
-        return self.repository.get_incident(incident_id)
+    def batches(self, dataset_id: str, limit: int, offset: int) -> Page[Batch]:
+        self.dataset(dataset_id)
+        return page(self.repository.list_batches(dataset_id, limit + 1, offset), limit, offset)
+
+    def scopes(self, dataset_id: str, limit: int, offset: int) -> Page[QualityScope]:
+        self.dataset(dataset_id)
+        return page(self.repository.list_quality_scopes(dataset_id, limit + 1, offset), limit, offset)
+
+    def quality(self, dataset_id: str, scope_id: str) -> ScopeQuality:
+        self.dataset(dataset_id)
+        return self.repository.get_quality(dataset_id, scope_id)

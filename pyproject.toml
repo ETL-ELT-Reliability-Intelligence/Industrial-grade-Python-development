@@ -2,11 +2,18 @@
 name = "etl-reliability-intelligence"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2.9"]
+dependencies = [
+    "pydantic>=2.9",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "psycopg[binary]>=3.2,<4",
+]
 
 [project.optional-dependencies]
 kafka = ["confluent-kafka>=2.5"]
-dev = ["pytest>=8"]
+dev = ["httpx>=0.27,<1", "pytest>=8,<10"]
+browser = ["playwright>=1.50,<2"]
+storage = ["alembic>=1.13,<2", "SQLAlchemy>=2.0,<3"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from fastapi.testclient import TestClient
 import pytest
 
-from services.backend.main import create_app
+from services.demo.backend.main import create_app
 
 playwright_api = pytest.importorskip("playwright.sync_api", reason="Install requirements-browser.txt for UI checks")
 expect = playwright_api.expect

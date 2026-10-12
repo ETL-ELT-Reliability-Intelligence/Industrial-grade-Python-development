@@ -1,84 +1,89 @@
-# Уровень приложения: backend и frontend
+# Уровень приложения
 
-Документация и запуск части проекта в `services/backend` и `services/frontend`.
+Основной backend читает datasets, batches и сохранённое качество из PostgreSQL.
+Контракты и схема принадлежат соседним компонентам; приложение не запускает
+quality checks и не вычисляет policy, аномалии или инциденты.
 
-- [План и границы ответственности](./plan.md) — последовательность итераций и зависимости от команды.
-- [Архитектура backend](./backend-architecture.md) — текущие границы модулей и подключение реальных источников в следующих итерациях.
-- Ниже — запуск и возможности первой реализации.
+Документы: [архитектура backend](backend-architecture.md), [план и границы](plan.md).
 
-## Запуск первой итерации
+## Установка и запуск
 
-Требуется Python 3.11+; можно использовать `uv` или стандартный `pip`. Все команды выполняются из корня репозитория. Зависимости этой части находятся в `services/backend/requirements*.txt`; общий корневой `pyproject.toml` пока не входит в изменения для коммита.
-
-```powershell
-uv venv .venv
-uv pip install --python .venv/Scripts/python.exe -r services/backend/requirements-dev.txt
-.venv/Scripts/python.exe -m uvicorn services.backend.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-Dashboard: <http://127.0.0.1:8000/>. Swagger/OpenAPI: <http://127.0.0.1:8000/docs>.
-
-Без `uv` можно использовать обычное виртуальное окружение:
+Python 3.11+. Команды из корня репозитория; ниже PowerShell.
+`uv.lock` фиксирует согласованный набор зависимостей. `requirements*.txt`
+оставлены для установки через pip, но не являются полным транзитивным lock-файлом.
 
 ```powershell
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r services/backend/requirements-dev.txt
+uv sync --locked --extra dev --extra storage --extra browser
+docker compose -f infra/docker-compose.yml up -d --wait postgres
+$env:DATABASE_URL = 'postgresql://reliability:reliability@127.0.0.1:5432/reliability'
+.venv/Scripts/python.exe -m alembic -c storage/postgres/alembic.ini upgrade head
 .venv/Scripts/python.exe -m uvicorn services.backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-## Реализованный сценарий
+Можно использовать существующий PostgreSQL вместо Docker: задать его `DATABASE_URL`
+и применить миграции коллег. Backend сам миграции не применяет.
+Без uv: создать venv и установить `services/backend/requirements-browser.txt`
+и `storage/requirements.txt` через pip.
+В Linux/macOS путь Python — `.venv/bin/python`, переменные задаются через `export`.
 
-1. Открыть обзор: два активных инцидента, один критический, четыре затронутых dataset и один закрытый инцидент. Счётчики относятся ко всему набору данных, фильтр меняет только список.
-2. Открыть `inc-042`: успешная загрузка orders сопровождается снижением row_count с 4,5 млн до 1,8 млн строк.
-3. Сравнить наблюдения в orders, fct_orders и revenue, посмотреть хронологию и гипотезу причины.
-4. Посмотреть потенциальный impact: он может включать dataset без подтверждённой аномалии, например customer_ltv. Оценка RCA — score ранжирования, а не доказанная причинность.
-5. Переключить фильтр на закрытые инциденты и открыть `inc-040`.
+Адрес приложения: <http://127.0.0.1:8000/>. API: <http://127.0.0.1:8000/docs>.
+Экран datasets добавляется отдельным frontend-коммитом; backend без frontend
+отвечает на `/` сообщением со ссылкой на `/docs`.
 
-URL карточки сохраняется в hash (`/#inc-042`); доступны загрузка, пустой список, ошибки API и повтор запроса. Интерфейс адаптируется к узкому экрану. Время показывается в часовом поясе браузера; API отдаёт timestamps с UTC offset.
+- `/health` — процесс жив; подключение к БД не требуется.
+- `/ready` — соединение и чтение необходимых таблиц/колонок доступны.
+- Без `DATABASE_URL` запросы данных и readiness возвращают 503; статические файлы
+  и документация доступны. После изменения переменной перезапустить процесс.
+- Приложение не подставляет demo при пустой или недоступной БД.
 
-## Контракт первой версии
+Это локальная итерация без авторизации; сервер по умолчанию запускается на loopback.
 
-| Метод и путь | Назначение |
-| --- | --- |
-| `GET /health` | Жив ли процесс; это не readiness проверки БД |
-| `GET /api/v1/overview` | Агрегаты готовых инцидентов и время снимка |
-| `GET /api/v1/incidents?status=open` | Список; status: open/investigating/resolved; без фильтра — все |
-| `GET /api/v1/incidents/{id}` | Детали, observations, root_cause_candidates, timeline и potential impact |
+## Явное тестовое наполнение
 
-Список возвращает `items`, `total`, `data_mode`, `snapshot_at`. Неизвестный ID — HTTP 404 с `{"detail":"Incident not found"}`; неподдерживаемый status — стандартный FastAPI HTTP 422. Точные схемы доступны в `/openapi.json`. Пагинация, изменение статуса, dataset API и investigation ещё не реализованы.
-
-## Где менять
-
-| Путь | Ответственность |
-| --- | --- |
-| `services/backend/main.py` | Сборка приложения, выбор адаптера и раздача frontend |
-| `services/backend/api.py` | HTTP endpoints, валидация запросов и HTTP-ошибки |
-| `services/backend/queries.py` | Чтение инцидентов, фильтр и сборка обзора |
-| `services/backend/models.py` | Типизированные публичные ответы |
-| `services/backend/repository.py` | Граница чтения данных; следующая итерация добавит PostgreSQL adapter |
-| `services/backend/demo.json` | Единственный источник демонстрационного сценария |
-| `services/frontend/` | Экран, стили и API client; расчёта RCA/impact здесь нет |
-| `tests/application/test_api.py` | Связность ответов, фильтр, ошибки и доступность frontend |
-| `tests/application/test_dashboard.py` | Проверки пользовательского сценария в браузере |
-
-Данные синтетические, фиксированные, загружаются при старте backend. PostgreSQL, Kafka, Agent и авторизация не подключены. Контракт — начальное предложение уровня приложения; интеграцию согласуем с владельцами источников данных. Интерфейс пока оформлен простым CSS в духе Windows XP и веб-страниц начала 2000-х; приоритет — архитектура backend и работа сценариев.
-
-## Проверка
+После миграций, в отдельном терминале с той же `DATABASE_URL`:
 
 ```powershell
-.venv/Scripts/python.exe -m pytest tests/application/test_api.py -q
-node --check services/frontend/app.js
+.venv/Scripts/python.exe -m services.backend.seed
 ```
 
-`node` нужен только для необязательной проверки синтаксиса JavaScript; frontend работает без Node.js и сборки.
+Команда атомарно создаёт **тестовые** `sample-app-orders` и `sample-app-empty`.
+В первом наборе две загрузки и scope `sample-window-1`, отличающийся от batch ID:
+нулевой row count, неизвестная доля null и решение BLOCK. Второй dataset пустой.
+При существовании любого из этих ID команда отказывается от записи: существующие
+данные не изменяются. Нет автоматического наполнения или очистки при старте.
 
-Для браузерных проверок:
+Ingestion пока публикует события и сохраняет raw data, но цепочка записи
+в state store ещё не подключена. Этот набор проверяет storage → API → UI,
+а не работоспособность всей платформы.
+
+## Отдельное историческое demo
 
 ```powershell
-uv pip install --python .venv/Scripts/python.exe -r services/backend/requirements-browser.txt
-.venv/Scripts/python.exe -m pytest tests/application -q
+.venv/Scripts/python.exe -m uvicorn services.demo.backend.main:app --host 127.0.0.1 --port 8001
 ```
 
-На Windows тесты используют установленный Microsoft Edge в headless-режиме. На других ОС путь к Python в командах — `.venv/bin/python`; сначала выполнить `.venv/bin/python -m playwright install chromium`. Другой Chromium-браузер можно указать через `PLAYWRIGHT_EXECUTABLE_PATH`. Без Playwright браузерные тесты пропускаются. Все API-запросы браузерных тестов обслуживаются локальным ASGI-приложением, отдельный сервер не нужен.
+Адрес <http://127.0.0.1:8001/#inc-042>. Это старый пример инцидентов на JSON,
+со своими API, frontend и тестами; PostgreSQL не нужен. Он не является
+контрактом будущего Incident Engine и не подключается к основному приложению.
 
-Подход опирается на официальные руководства FastAPI: [раздача статических файлов](https://fastapi.tiangolo.com/tutorial/static-files/) и [тестирование API](https://fastapi.tiangolo.com/tutorial/testing/).
+## Проверки
+
+`TEST_DATABASE_URL` должен указывать **только на выделенную одноразовую тестовую БД**:
+существующий storage harness применяет миграции и очищает таблицы перед тестами.
+Не подставлять development/production URL.
+
+```powershell
+$env:TEST_DATABASE_URL = 'postgresql://reliability:reliability@127.0.0.1:5432/reliability_test'
+.venv/Scripts/python.exe -m pytest tests/application/test_api.py tests/application/test_postgres.py tests/application/demo -q
+.venv/Scripts/python.exe -m pytest -q
+```
+
+Инфраструктурный compose создаёт `reliability_test` при первом создании тома.
+Если её нет в уже существующем томе, создать отдельную тестовую БД вручную;
+для этого не нужно удалять том с рабочими данными.
+
+Windows-браузерные тесты используют установленный Edge в headless-режиме.
+Linux/macOS: `.venv/bin/python -m playwright install chromium`.
+`PLAYWRIGHT_EXECUTABLE_PATH` позволяет указать другой Chromium-браузер.
+Без Playwright браузерные тесты пропускаются; без `TEST_DATABASE_URL`
+пропускаются интеграционные тесты. Такие пропуски не подтверждают интеграцию.
