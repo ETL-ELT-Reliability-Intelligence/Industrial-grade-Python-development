@@ -14,7 +14,7 @@ Python 3.11+. Команды из корня репозитория; ниже Po
 
 ```powershell
 uv sync --locked --extra dev --extra storage --extra browser
-docker compose -f infra/docker-compose.yml up -d --wait postgres
+docker compose -f docker-compose.yml up -d --wait postgres
 $env:DATABASE_URL = 'postgresql://reliability:reliability@127.0.0.1:5432/reliability'
 .venv/Scripts/python.exe -m alembic -c storage/postgres/alembic.ini upgrade head
 .venv/Scripts/python.exe -m uvicorn services.backend.main:app --host 127.0.0.1 --port 8000
@@ -78,9 +78,8 @@ $env:TEST_DATABASE_URL = 'postgresql://reliability:reliability@127.0.0.1:5432/re
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-Инфраструктурный compose создаёт `reliability_test` при первом создании тома.
-Если её нет в уже существующем томе, создать отдельную тестовую БД вручную;
-для этого не нужно удалять том с рабочими данными.
+Корневой `docker-compose.yml` создаёт `reliability_test` при первичной инициализации
+PostgreSQL на пустом томе.
 
 Windows-браузерные тесты используют установленный Edge в headless-режиме.
 Linux/macOS: `.venv/bin/python -m playwright install chromium`.
