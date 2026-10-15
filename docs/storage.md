@@ -15,7 +15,8 @@ PostgreSQL с миграциями Alembic и слой доступа к дан�
 | `storage/repositories.py` | Protocol-интерфейсы репозиториев |
 | `storage/serialization.py` | JSON-представление результатов проверок для JSONB |
 | `storage/postgres/` | `connect()`, реализации репозиториев, Alembic (`alembic.ini`, `migrations/`) |
-| `infra/docker-compose.yml` | PostgreSQL для разработки и тестов |
+| `docker-compose.yml` | Единая инфраструктура платформы, включая PostgreSQL для разработки и тестов |
+| `infra/postgres/init-test-db.sql` | Создание отдельной тестовой БД при первичной инициализации PostgreSQL |
 | `scripts/storage_setup.*`, `scripts/storage_test.*` | установка и тесты (`.sh` и `.ps1`) |
 
 ## События (Kafka — только транспорт)
@@ -83,10 +84,17 @@ Linux/macOS: `bash scripts/storage_setup.sh`, затем `bash scripts/storage_t
 Windows: `powershell -File scripts/storage_setup.ps1`, затем
 `powershell -File scripts/storage_test.ps1`.
 
+Скрипты setup используют корневой `docker-compose.yml` и запускают только PostgreSQL
+с ожиданием готовности. Команды вручную выполняются из корня репозитория:
+
+```sh
+docker compose -f docker-compose.yml up -d --wait postgres
+```
+
 Интеграционные тесты пропускаются, если не задан `TEST_DATABASE_URL` или не
-установлены зависимости. Тестовая БД `reliability_test` создаётся только при
-первом создании тома; если том уже существовал, выполните
-`docker compose -f infra/docker-compose.yml down -v` и повторите setup.
+установлены зависимости. `reliability` предназначена для приложения,
+`reliability_test` — для тестов, которые очищают таблицы перед каждым запуском.
+Не направляйте `TEST_DATABASE_URL` на базу приложения.
 
 ## Допущения, требующие подтверждения
 

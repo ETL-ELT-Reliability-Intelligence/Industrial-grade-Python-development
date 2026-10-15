@@ -9,7 +9,7 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) { throw "$Command failed with exit code $LASTEXITCODE" }
 }
 
-Invoke-Checked docker @("compose", "-f", "infra/docker-compose.yml", "up", "-d", "--wait", "postgres")
+Invoke-Checked docker @("compose", "-f", "docker-compose.yml", "up", "-d", "--wait", "postgres")
 Invoke-Checked py @("-3.12", "-m", "pip", "install", "-e", ".[dev]", "-r", "storage/requirements.txt")
 
 if (-not $env:DATABASE_URL) {
