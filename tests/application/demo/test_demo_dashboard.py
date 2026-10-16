@@ -27,19 +27,18 @@ def browser():
 
 
 @pytest.fixture
-def page(browser):
-    context = browser.new_context(locale="ru-RU", timezone_id="Europe/Moscow")
-    page = context.new_page()
-    page.set_default_timeout(5000)
-    with TestClient(create_app()) as client:
-        def serve(route):
-            url = urlsplit(route.request.url)
-            response = client.get(url.path + (f"?{url.query}" if url.query else ""))
-            route.fulfill(status=response.status_code, content_type=response.headers.get("content-type", "text/plain"), body=response.content)
+def page(browser_context):
+    with browser_context(locale="ru-RU", timezone_id="Europe/Moscow") as context:
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        with TestClient(create_app()) as client:
+            def serve(route):
+                url = urlsplit(route.request.url)
+                response = client.get(url.path + (f"?{url.query}" if url.query else ""))
+                route.fulfill(status=response.status_code, content_type=response.headers.get("content-type", "text/plain"), body=response.content)
 
-        page.route("http://application.test/**", serve)
-        yield page
-    context.close()
+            page.route("http://application.test/**", serve)
+            yield page
 
 
 def test_incident_scenario_and_filter(page):
