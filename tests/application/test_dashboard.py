@@ -32,26 +32,23 @@ def browser():
 
 
 @contextmanager
-def browser_page(browser, repository_factory):
-    context = browser.new_context(locale="ru-RU", timezone_id="Europe/Moscow")
-    page = context.new_page()
-    page.set_default_timeout(5000)
-    with TestClient(create_app(repository_factory=repository_factory)) as client:
-        def serve(route):
-            url = urlsplit(route.request.url)
-            response = client.get(url.path + (f"?{url.query}" if url.query else ""))
-            route.fulfill(status=response.status_code, content_type=response.headers.get("content-type", "text/plain"), body=response.content)
+def browser_page(browser_context, repository_factory):
+    with browser_context(locale="ru-RU", timezone_id="Europe/Moscow") as context:
+        page = context.new_page()
+        page.set_default_timeout(5000)
+        with TestClient(create_app(repository_factory=repository_factory)) as client:
+            def serve(route):
+                url = urlsplit(route.request.url)
+                response = client.get(url.path + (f"?{url.query}" if url.query else ""))
+                route.fulfill(status=response.status_code, content_type=response.headers.get("content-type", "text/plain"), body=response.content)
 
-        page.route("http://application.test/**", serve)
-        try:
+            page.route("http://application.test/**", serve)
             yield page
-        finally:
-            context.close()
 
 
 @pytest.fixture
-def page(browser):
-    with browser_page(browser, MemoryRepository().factory) as page:
+def page(browser_context):
+    with browser_page(browser_context, MemoryRepository().factory) as page:
         yield page
 
 
@@ -105,10 +102,10 @@ def test_error_retry_and_refresh(page):
     expect(page.locator("#refreshed-at")).to_contain_text("не свежесть исходных данных")
 
 
-def test_catalog_pagination(browser):
+def test_catalog_pagination(browser_context):
     repository = MemoryRepository()
     repository.datasets = [Dataset(dataset_id=f"dataset-{i:02}", created_at=NOW) for i in range(51)]
-    with browser_page(browser, repository.factory) as page:
+    with browser_page(browser_context, repository.factory) as page:
         page.goto("http://application.test/")
         expect(page.locator(".catalog-item")).to_have_count(50)
         page.locator("#catalog").get_by_role("button", name="Далее").click()
@@ -119,12 +116,12 @@ def test_catalog_pagination(browser):
         expect(page.locator(".catalog-item")).to_have_count(50)
 
 
-def test_batches_and_scopes_pagination(browser):
+def test_batches_and_scopes_pagination(browser_context):
     repository = MemoryRepository()
     repository.batches = [repository.batches[0].model_copy(update={"batch_id": f"batch-{i:02}"}) for i in range(51)]
     quality = repository.qualities[("orders", "window-1")]
     repository.qualities = {("orders", f"window-{i:02}"): quality.model_copy(update={"scope_id": f"window-{i:02}"}) for i in range(51)}
-    with browser_page(browser, repository.factory) as page:
+    with browser_page(browser_context, repository.factory) as page:
         page.goto("http://application.test/?dataset=orders")
         for panel in ("batches", "scopes"):
             root = page.locator(f"#{panel}")
@@ -149,11 +146,11 @@ def test_late_response_does_not_replace_new_selection(page):
     expect(page.locator("#quality")).not_to_contain_text("STALE")
 
 
-def test_mobile_keyboard_and_untrusted_text(browser):
+def test_mobile_keyboard_and_untrusted_text(browser_context):
     repository = MemoryRepository()
     malicious_id = '<img src=x onerror="window.injected=true">'
     repository.datasets.append(Dataset(dataset_id=malicious_id, created_at=NOW))
-    with browser_page(browser, repository.factory) as page:
+    with browser_page(browser_context, repository.factory) as page:
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto("http://application.test/?dataset=orders&scope=window-1")
         expect(page.locator("#quality .status-block")).to_be_visible()
@@ -167,7 +164,7 @@ def test_mobile_keyboard_and_untrusted_text(browser):
         expect(page.locator("#dataset h2")).to_have_text("empty")
 
 
-def test_postgres_change_appears_after_refresh(browser):
+def test_postgres_change_appears_after_refresh(browser_context):
     from tests.storage.support import TEST_DATABASE_URL, migrate
     if not TEST_DATABASE_URL:
         pytest.skip("Set TEST_DATABASE_URL to an expendable test database")
@@ -184,7 +181,7 @@ def test_postgres_change_appears_after_refresh(browser):
         try:
             for result in evidence(dataset_id):
                 quality.save_check_result(result)
-            with browser_page(browser, lambda: open_repository(TEST_DATABASE_URL)) as page:
+            with browser_page(browser_context, lambda: open_repository(TEST_DATABASE_URL)) as page:
                 page.goto(f"http://application.test/?dataset={dataset_id}&scope=window-1")
                 expect(page.locator("#quality")).to_contain_text("Решение ещё не сохранено")
                 quality.save_quality_decision(dataset_id, "window-1", QualityDecision(
