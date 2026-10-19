@@ -43,6 +43,7 @@ services:
     command: standalone
     depends_on:
       - kafka
+      - minio
     ports:
       - "8080:8080"
     environment:
@@ -50,13 +51,14 @@ services:
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/repo/pipelines/airflow/dags
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      RAW_DATA_DIR: /data/raw
-      _PIP_ADDITIONAL_REQUIREMENTS: pydantic>=2.9 confluent-kafka>=2.5
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: raw-data
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      _PIP_ADDITIONAL_REQUIREMENTS: pydantic>=2.9 confluent-kafka>=2.5 boto3>=1.34
     volumes:
       - .:/opt/airflow/repo
-      - raw-data:/data/raw
 
 volumes:
-  raw-data:
   postgres-data:
   minio-data:

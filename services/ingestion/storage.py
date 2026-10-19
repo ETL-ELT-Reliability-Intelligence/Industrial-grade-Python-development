@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from .sources import Record
 
@@ -44,4 +44,55 @@ class LocalRawStore:
         known.append(fingerprint)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"fingerprints": known}))
+        return len(known), previous
+
+
+class S3RawStore:
+    """RawStore on any S3-compatible API (MinIO locally). Same layout as LocalRawStore."""
+
+    def __init__(self, client: Any, bucket: str):
+        self._client = client
+        self._bucket = bucket
+
+    @classmethod
+    def from_endpoint(cls, endpoint_url: str, bucket: str, access_key: str, secret_key: str) -> "S3RawStore":
+        import boto3
+
+        client = boto3.client(
+            "s3", endpoint_url=endpoint_url, aws_access_key_id=access_key, aws_secret_access_key=secret_key
+        )
+        try:
+            client.head_bucket(Bucket=bucket)
+        except client.exceptions.ClientError:
+            client.create_bucket(Bucket=bucket)
+        return cls(client, bucket)
+
+    def next_batch_number(self, dataset_id: str, day: str) -> int:
+        paginator = self._client.get_paginator("list_objects_v2")
+        count = 0
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=f"{dataset_id}/{day}-"):
+            count += sum(1 for obj in page.get("Contents", []) if obj["Key"].endswith(".jsonl"))
+        return count + 1
+
+    def save_raw(self, dataset_id: str, batch_id: str, records: list[Record]) -> str:
+        key = f"{dataset_id}/{batch_id}.jsonl"
+        body = "".join(json.dumps(record, default=str) + "\n" for record in records)
+        self._client.put_object(Bucket=self._bucket, Key=key, Body=body.encode("utf-8"))
+        return f"s3://{self._bucket}/{key}"
+
+    def schema_version(self, dataset_id: str, fingerprint: str) -> tuple[int, int | None]:
+        key = f"{dataset_id}/schema.json"
+        try:
+            known: list[str] = json.loads(self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read())[
+                "fingerprints"
+            ]
+        except Exception as exc:
+            if getattr(exc, "response", {}).get("Error", {}).get("Code") != "NoSuchKey":
+                raise
+            known = []
+        if fingerprint in known:
+            return known.index(fingerprint) + 1, None
+        previous = len(known) or None
+        known.append(fingerprint)
+        self._client.put_object(Bucket=self._bucket, Key=key, Body=json.dumps({"fingerprints": known}).encode())
         return len(known), previous
