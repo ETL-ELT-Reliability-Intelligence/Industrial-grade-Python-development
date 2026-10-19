@@ -1,6 +1,7 @@
 """Orders ingestion DAG: report start, ingest, report finish; failures emit pipeline.failed.
 
-Config via env: KAFKA_BOOTSTRAP_SERVERS (optional), RAW_DATA_DIR, MOCK_VOLUME_FACTOR.
+Config via env: KAFKA_BOOTSTRAP_SERVERS (optional), S3_ENDPOINT_URL (optional, else RAW_DATA_DIR),
+S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, MOCK_VOLUME_FACTOR.
 The repo root must be on PYTHONPATH (docker-compose does this).
 """
 
@@ -15,7 +16,7 @@ from pipelines.airflow.pipeline_events import PipelineRunReporter
 from services.ingestion.publisher import InMemoryPublisher, KafkaPublisher
 from services.ingestion.service import IngestionService
 from services.ingestion.sources import MockApiSource
-from services.ingestion.storage import LocalRawStore
+from services.ingestion.storage import LocalRawStore, RawStore, S3RawStore
 
 PIPELINE_ID = "orders_ingestion"
 
@@ -23,6 +24,18 @@ PIPELINE_ID = "orders_ingestion"
 def _publisher():
     servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS")
     return KafkaPublisher(servers) if servers else InMemoryPublisher()
+
+
+def _store() -> RawStore:
+    endpoint = os.environ.get("S3_ENDPOINT_URL")
+    if endpoint:
+        return S3RawStore.from_endpoint(
+            endpoint,
+            os.environ.get("S3_BUCKET", "raw-data"),
+            os.environ.get("S3_ACCESS_KEY", "minioadmin"),
+            os.environ.get("S3_SECRET_KEY", "minioadmin"),
+        )
+    return LocalRawStore(Path(os.environ.get("RAW_DATA_DIR", "/data/raw")))
 
 
 def _on_failure(context) -> None:
@@ -51,8 +64,9 @@ def orders_ingestion():
     @task
     def ingest() -> dict:
         factor = float(os.environ.get("MOCK_VOLUME_FACTOR", "1.0"))
-        service = IngestionService(LocalRawStore(Path(os.environ.get("RAW_DATA_DIR", "/data/raw"))), _publisher())
-        return service.ingest(MockApiSource(volume_factor=factor)).model_dump(mode="json")
+        service = IngestionService(_store(), _publisher())
+        run_id = get_current_context()["run_id"]  # stable across task retries -> idempotent ingestion
+        return service.ingest(MockApiSource(volume_factor=factor), run_id=run_id).model_dump(mode="json")
 
     @task
     def report_finished(_ingested: dict) -> None:

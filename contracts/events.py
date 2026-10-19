@@ -40,6 +40,13 @@ class Event(Contract):
         """Partition key; keeps events of one dataset/pipeline ordered."""
         raise NotImplementedError
 
+    @property
+    def dedup_key(self) -> str:
+        """Identity of the fact the event reports. Delivery is at-least-once, so
+        a redelivered or republished event has the same dedup_key; consumers use it to skip duplicates.
+        Defaults to the event's own id; events describing a repeatable fact override it."""
+        return f"{self.event_type.value}:{self.event_id}"
+
 
 class DatasetIngestedEvent(Event):
     event_type: Literal[EventType.DATASET_INGESTED] = EventType.DATASET_INGESTED
@@ -53,6 +60,10 @@ class DatasetIngestedEvent(Event):
     @property
     def key(self) -> str:
         return self.dataset_id
+
+    @property
+    def dedup_key(self) -> str:
+        return f"{self.event_type.value}:{self.dataset_id}:{self.batch_id}"
 
 
 class SchemaChangedEvent(Event):
@@ -73,6 +84,10 @@ class SchemaChangedEvent(Event):
     def key(self) -> str:
         return self.dataset_id
 
+    @property
+    def dedup_key(self) -> str:
+        return f"{self.event_type.value}:{self.dataset_id}:{self.new_version}"
+
 
 class PipelineEvent(Event):
     pipeline_id: NonBlankText
@@ -82,6 +97,10 @@ class PipelineEvent(Event):
     @property
     def key(self) -> str:
         return self.pipeline_id
+
+    @property
+    def dedup_key(self) -> str:
+        return f"{self.event_type.value}:{self.pipeline_id}:{self.run_id}"
 
 
 class PipelineStartedEvent(PipelineEvent):

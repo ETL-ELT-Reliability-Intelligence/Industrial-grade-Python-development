@@ -34,7 +34,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --extra dev
       # All service-free tests, including API, serialization and row adapters.
-      # The four ignored modules belong exclusively to postgres/browser below.
+      # The ignored modules belong exclusively to postgres/browser/kafka below.
       - name: Run unit tests
         run: >-
           uv run --no-sync pytest tests
@@ -42,6 +42,7 @@ jobs:
           --ignore=tests/application/test_postgres.py
           --ignore=tests/application/test_dashboard.py
           --ignore=tests/application/demo/test_demo_dashboard.py
+          --ignore=tests/integration
           --junitxml=test-results/unit.xml
       - uses: actions/upload-artifact@v4
         if: always()
@@ -88,6 +89,37 @@ jobs:
         with:
           name: junit-postgres
           path: test-results/postgres.xml
+
+  kafka:
+    name: Kafka integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --locked --extra dev --extra kafka
+      - run: docker compose up -d kafka
+      - name: Wait for broker
+        run: |
+          for i in $(seq 1 30); do
+            docker compose exec -T kafka /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker compose logs kafka
+          exit 1
+      - name: Run ingestion -> Kafka -> consumer test
+        run: uv run --no-sync pytest tests/integration --junitxml=test-results/kafka.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-kafka
+          path: test-results/kafka.xml
 
   browser:
     name: Browser tests
