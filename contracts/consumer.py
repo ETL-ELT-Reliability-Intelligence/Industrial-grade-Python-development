@@ -42,6 +42,10 @@ class KafkaEventConsumer:
         if message is None:
             return None
         if message.error():
+            from confluent_kafka import KafkaError
+
+            if message.error().code() == KafkaError.UNKNOWN_TOPIC_OR_PART:
+                return None  # a topic appears with its first event; not an error for a subscriber
             raise RuntimeError(f"Kafka consume failed: {message.error()}")
         try:
             return parse_event(message.value())

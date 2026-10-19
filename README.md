@@ -28,3 +28,35 @@
 ├── docker-compose.yml
 └── pyproject.toml
 ```
+
+## Локальная инфраструктура
+
+```bash
+docker compose up -d            # Kafka, PostgreSQL, RustFS (S3), Airflow
+pip install -e ".[dev,kafka,s3]"
+python -m services.ingestion --rows 100 --kafka localhost:9092 --s3-endpoint http://localhost:9000
+```
+
+| Сервис   | Адрес для хоста        | Адрес для контейнеров |
+| -------- | ---------------------- | --------------------- |
+| Kafka    | `localhost:9092`       | `kafka:19092`         |
+| S3 API   | `localhost:9000`       | `rustfs:9000`         |
+| Airflow  | `http://localhost:8080`| —                     |
+
+Интеграционные тесты с реальным Kafka: `KAFKA_BOOTSTRAP_SERVERS=localhost:9092 pytest -m integration`.
+
+### Почему объектное хранилище — RustFS, а не MinIO
+
+Изначально в `docker-compose.yml` стоял `minio/minio`. При запуске образ не скачивается: Docker Hub отвечает `pull access denied`, зеркало `quay.io/minio/minio` отвечает `unauthorized` (в том числе для закреплённого тега релиза). Причину мы не выясняли, но `docker compose up` падал на этом сервисе, а от него зависит Airflow.
+
+Выбрали `rustfs/rustfs`:
+
+- это S3-совместимый сервер, который скачался и заработал с теми же портами (9000/9001) и учётными данными, что были у MinIO;
+- код не привязан к конкретному серверу: `S3RawStore` работает через `boto3` с любым S3 API, поэтому замена потребовала изменить только `docker-compose.yml`;
+- мы проверили на нём запись/чтение batch и манифестов запусков, а также DAG в Airflow целиком.
+
+Не проверяли и не сравнивали по производительности, надёжности и лицензии: RustFS — молодой проект, для production выбор стоит пересмотреть (вернуться на MinIO из исходников, взять Garage, SeaweedFS или облачный S3). Имена переменных окружения `S3_*` от сервера не зависят. Логин/пароль `minioadmin` оставлены как локальные dev-значения по умолчанию.
+
+### Kafka в Docker: два listener'а
+
+Брокер анонсирует два адреса: `kafka:19092` для контейнеров (Airflow) и `localhost:9092` для хоста. Раньше был один адрес `localhost:9092`: клиент в контейнере подключался к bootstrap-серверу, получал в метаданных `localhost:9092` и не мог отправить сообщение (`Kafka delivery failed: timeout`).
