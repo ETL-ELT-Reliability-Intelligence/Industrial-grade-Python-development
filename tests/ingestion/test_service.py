@@ -87,3 +87,65 @@ def test_event_json_roundtrip(service):
     assert parsed == event
     assert event.topic == "dataset.ingested"
     assert event.key == "orders"
+
+
+class FlakyPublisher(InMemoryPublisher):
+    """Fails the first publish, like a Kafka outage right after raw data was saved."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail = True
+
+    def publish(self, event):
+        if self.fail:
+            self.fail = False
+            raise RuntimeError("Kafka delivery failed")
+        super().publish(event)
+
+
+def test_retry_of_same_run_does_not_create_second_batch(tmp_path):
+    publisher = FlakyPublisher()
+    service = IngestionService(LocalRawStore(tmp_path), publisher, clock=lambda: NOW)
+
+    with pytest.raises(RuntimeError):
+        service.ingest(MockApiSource(base_rows=5), run_id="scheduled__2026-09-26T10:00:00+00:00")
+    event = service.ingest(MockApiSource(base_rows=5), run_id="scheduled__2026-09-26T10:00:00+00:00")
+
+    assert event.batch_id == "2026-09-26-001"
+    assert publisher.events == [event]
+    assert len(list((tmp_path / "orders").glob("*.jsonl"))) == 1
+
+
+def test_retry_republishes_schema_change_too(tmp_path):
+    publisher = InMemoryPublisher()
+    service = IngestionService(LocalRawStore(tmp_path), publisher, clock=lambda: NOW)
+    service.ingest(FixedSource([{"id": 1}]), run_id="r1")
+    service.ingest(FixedSource([{"id": 1, "extra": 1}]), run_id="r2")
+    publisher.events.clear()
+
+    service.ingest(FixedSource([{"id": 1, "extra": 1}]), run_id="r2")
+
+    assert [type(e) for e in publisher.events] == [SchemaChangedEvent, DatasetIngestedEvent]
+
+
+def test_republished_events_share_dedup_keys(tmp_path):
+    publisher = InMemoryPublisher()
+    service = IngestionService(LocalRawStore(tmp_path), publisher, clock=lambda: NOW)
+    service.ingest(MockApiSource(base_rows=5), run_id="r1")
+    service.ingest(MockApiSource(base_rows=5), run_id="r1")
+
+    first, second = publisher.events
+    assert first == second
+    assert first.dedup_key == second.dedup_key == "dataset.ingested:orders:2026-09-26-001"
+
+
+def test_different_runs_get_different_batches(tmp_path):
+    service = IngestionService(LocalRawStore(tmp_path), InMemoryPublisher(), clock=lambda: NOW)
+    a = service.ingest(MockApiSource(base_rows=5), run_id="r1")
+    b = service.ingest(MockApiSource(base_rows=5), run_id="r2")
+    assert a.batch_id != b.batch_id
+
+
+def test_without_run_id_every_call_is_a_new_batch(service):
+    ids = {service.ingest(MockApiSource(base_rows=5)).batch_id for _ in range(2)}
+    assert len(ids) == 2

@@ -1,10 +1,16 @@
 """Raw data and schema-version storage. MinIO can implement the same protocol."""
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Protocol
 
 from .sources import Record
+
+
+def _run_name(run_id: str) -> str:
+    """Run ids (e.g. Airflow's) contain characters that are unsafe in paths and keys."""
+    return hashlib.sha256(run_id.encode()).hexdigest()[:24]
 
 
 class RawStore(Protocol):
@@ -15,6 +21,12 @@ class RawStore(Protocol):
 
     def schema_version(self, dataset_id: str, fingerprint: str) -> tuple[int, int | None]:
         """Register fingerprint; return (version, previous_version_if_schema_changed)."""
+
+    def load_run(self, dataset_id: str, run_id: str) -> list[str] | None:
+        """Events (as JSON) committed for this run, or None if the run was never committed."""
+
+    def save_run(self, dataset_id: str, run_id: str, events: list[str]) -> None:
+        """Commit the events of a run. Written before publishing, so a retry can republish them."""
 
 
 class LocalRawStore:
@@ -45,6 +57,20 @@ class LocalRawStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"fingerprints": known}))
         return len(known), previous
+
+    def _run_path(self, dataset_id: str, run_id: str) -> Path:
+        return self._root / dataset_id / "runs" / f"{_run_name(run_id)}.json"
+
+    def load_run(self, dataset_id: str, run_id: str) -> list[str] | None:
+        path = self._run_path(dataset_id, run_id)
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def save_run(self, dataset_id: str, run_id: str, events: list[str]) -> None:
+        path = self._run_path(dataset_id, run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(events))
+        tmp.replace(path)  # atomic: a run is either fully committed or absent
 
 
 class S3RawStore:
@@ -96,3 +122,21 @@ class S3RawStore:
         known.append(fingerprint)
         self._client.put_object(Bucket=self._bucket, Key=key, Body=json.dumps({"fingerprints": known}).encode())
         return len(known), previous
+
+    def load_run(self, dataset_id: str, run_id: str) -> list[str] | None:
+        try:
+            body = self._client.get_object(Bucket=self._bucket, Key=self._run_key(dataset_id, run_id))["Body"]
+        except Exception as exc:
+            if getattr(exc, "response", {}).get("Error", {}).get("Code") != "NoSuchKey":
+                raise
+            return None
+        return json.loads(body.read())
+
+    def save_run(self, dataset_id: str, run_id: str, events: list[str]) -> None:
+        self._client.put_object(
+            Bucket=self._bucket, Key=self._run_key(dataset_id, run_id), Body=json.dumps(events).encode()
+        )
+
+    @staticmethod
+    def _run_key(dataset_id: str, run_id: str) -> str:
+        return f"{dataset_id}/runs/{_run_name(run_id)}.json"

@@ -59,7 +59,8 @@ def orders_ingestion():
     def ingest() -> dict:
         factor = float(os.environ.get("MOCK_VOLUME_FACTOR", "1.0"))
         service = IngestionService(_store(), _publisher())
-        return service.ingest(MockApiSource(volume_factor=factor)).model_dump(mode="json")
+        run_id = get_current_context()["run_id"]  # stable across task retries -> idempotent ingestion
+        return service.ingest(MockApiSource(volume_factor=factor), run_id=run_id).model_dump(mode="json")
 
     @task
     def report_finished(_ingested: dict) -> None:

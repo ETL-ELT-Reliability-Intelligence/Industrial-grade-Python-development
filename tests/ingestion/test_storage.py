@@ -71,3 +71,10 @@ def test_s3_unexpected_error_is_not_swallowed():
 
     with pytest.raises(RuntimeError):
         S3RawStore(Broken(), "raw-data").schema_version("orders", "a")
+
+
+def test_run_commit_roundtrip(store):
+    assert store.load_run("orders", "scheduled__2026-09-26T10:00:00+00:00") is None
+    store.save_run("orders", "scheduled__2026-09-26T10:00:00+00:00", ['{"a": 1}'])
+    assert store.load_run("orders", "scheduled__2026-09-26T10:00:00+00:00") == ['{"a": 1}']
+    assert store.load_run("orders", "other") is None
