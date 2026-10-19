@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Datasets и качество — Reliability Intelligence</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=classic-layout-2">
+  <script src="/assets/app.js?v=classic-layout-2" defer></script>
+</head>
+<body>
+  <header class="sidebar">
+    <div class="title-bar"><span class="brand-mark">RI</span> Reliability Intelligence — мониторинг ETL/ELT</div>
+    <nav class="menu-bar" aria-label="Основная навигация">
+      <a class="nav-item active" href="/" aria-current="page">Datasets и качество</a>
+      <a class="nav-item" href="/docs" target="_blank" rel="noopener">Документация API</a>
+    </nav>
+  </header>
+  <main>
+    <header class="page-header">
+      <div><h1>Надёжность данных</h1><p class="subtitle">Datasets, загрузки и результаты проверок качества.</p></div>
+      <button id="refresh" type="button" class="button">Обновить данные</button>
+    </header>
+    <p id="refreshed-at" class="snapshot" role="status">Данные ещё не загружены.</p>
+    <div class="workspace">
+      <section class="panel" aria-labelledby="catalog-heading">
+        <div class="panel-header"><h2 id="catalog-heading">Datasets</h2></div>
+        <div id="catalog" aria-live="polite"></div>
+      </section>
+      <section id="dataset-detail" class="panel detail-panel" aria-label="Карточка dataset">
+        <div id="dataset" aria-live="polite"></div>
+        <section class="detail-section" aria-labelledby="batches-heading">
+          <h3 id="batches-heading">Загрузки</h3>
+          <div id="batches" aria-live="polite"></div>
+        </section>
+        <section class="detail-section" aria-labelledby="scopes-heading">
+          <h3 id="scopes-heading">Области проверки качества</h3>
+          <div id="scopes" aria-live="polite"></div>
+        </section>
+        <section class="detail-section" aria-labelledby="quality-heading">
+          <h3 id="quality-heading">Результаты выбранной области</h3><div id="quality" aria-live="polite"></div>
+        </section>
+      </section>
+    </div>
+    <footer>Отсутствие проверок или решения не означает успешное прохождение качества.</footer>
+  </main>
+</body>
+</html>

@@ -54,6 +54,7 @@ class IngestionService:
             events.append(
                 SchemaChangedEvent(
                     dataset_id=batch.dataset_id,
+                    batch_id=batch_id,
                     previous_version=previous,
                     new_version=version,
                     detected_at=received_at,

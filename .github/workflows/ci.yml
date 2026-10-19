@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI_REQUIRE_NO_SKIPS: "1"
+
+jobs:
+  unit:
+    name: Unit tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      # All service-free tests, including API, serialization and row adapters.
+      # The ignored modules belong exclusively to postgres/browser/kafka below.
+      - name: Run unit tests
+        run: >-
+          uv run --no-sync pytest tests
+          --ignore=tests/storage/test_repositories.py
+          --ignore=tests/application/test_postgres.py
+          --ignore=tests/application/test_dashboard.py
+          --ignore=tests/application/demo/test_demo_dashboard.py
+          --ignore=tests/integration
+          --junitxml=test-results/unit.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-unit-${{ matrix.python }}
+          path: test-results/unit.xml
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: reliability
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: reliability_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U reliability -d reliability_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://reliability:ci-only@localhost:5432/reliability_test
+      DATABASE_URL: postgresql://reliability:ci-only@localhost:5432/reliability_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --locked --extra dev --extra storage
+      # Fresh service database; the test harness subsequently repeats upgrade head.
+      - name: Apply migrations to empty database
+        run: uv run --no-sync alembic -c storage/postgres/alembic.ini upgrade head
+      - name: Run PostgreSQL tests
+        run: >-
+          uv run --no-sync pytest
+          tests/storage/test_repositories.py tests/application/test_postgres.py
+          --junitxml=test-results/postgres.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-postgres
+          path: test-results/postgres.xml
+
+  kafka:
+    name: Kafka integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --locked --extra dev --extra kafka
+      - run: docker compose up -d kafka
+      - name: Wait for broker
+        run: |
+          for i in $(seq 1 30); do
+            docker compose exec -T kafka /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          docker compose logs kafka
+          exit 1
+      - name: Run ingestion -> Kafka -> consumer test
+        run: uv run --no-sync pytest tests/integration --junitxml=test-results/kafka.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-kafka
+          path: test-results/kafka.xml
+
+  browser:
+    name: Browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: reliability
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: reliability_browser_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U reliability -d reliability_browser_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://reliability:ci-only@localhost:5432/reliability_browser_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --locked --extra dev --extra storage --extra browser
+      - run: uv run --no-sync playwright install --with-deps chromium
+      # Existing fixtures serve ASGI via TestClient and seed/migrate the DB scenario.
+      - name: Run application and demo browser tests
+        run: >-
+          uv run --no-sync pytest
+          tests/application/test_dashboard.py tests/application/demo/test_demo_dashboard.py
+          --junitxml=test-results/browser.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-browser
+          path: test-results/browser.xml
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-diagnostics
+          path: test-results/browser/
+          retention-days: 7
+
+  config:
+    name: Config checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - run: docker compose config --quiet
+
+  ruff:
+    name: Ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: "3.11"
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: uv run --no-sync ruff check .

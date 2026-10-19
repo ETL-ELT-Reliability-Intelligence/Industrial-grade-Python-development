@@ -39,7 +39,10 @@ def _store() -> RawStore:
 
 
 def _on_failure(context) -> None:
-    PipelineRunReporter(_publisher()).failed(PIPELINE_ID, context["run_id"], str(context.get("exception")))
+    PipelineRunReporter(_publisher()).failed(
+        PIPELINE_ID, context["run_id"], str(context.get("exception")),
+        started_at=context["dag_run"].start_date,
+    )
 
 
 @dag(
@@ -53,7 +56,10 @@ def _on_failure(context) -> None:
 def orders_ingestion():
     @task
     def report_started() -> None:
-        PipelineRunReporter(_publisher()).started(PIPELINE_ID, get_current_context()["run_id"])
+        context = get_current_context()
+        PipelineRunReporter(_publisher()).started(
+            PIPELINE_ID, context["run_id"], started_at=context["dag_run"].start_date,
+        )
 
     @task
     def ingest() -> dict:

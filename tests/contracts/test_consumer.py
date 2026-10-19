@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from contracts.consumer import Deduplicator
 from contracts.events import (
+    DataQualityFailedEvent,
     DatasetIngestedEvent,
     PipelineFailedEvent,
     PipelineFinishedEvent,
@@ -26,9 +27,18 @@ def test_deduplicator_skips_redelivery_but_not_new_facts():
 def test_every_event_type_has_a_dedup_key():
     events = [
         ingested(),
-        SchemaChangedEvent(dataset_id="orders", previous_version=1, new_version=2, detected_at=NOW),
-        PipelineStartedEvent(pipeline_id="p", run_id="r", occurred_at=NOW),
-        PipelineFinishedEvent(pipeline_id="p", run_id="r", occurred_at=NOW, duration_seconds=1),
-        PipelineFailedEvent(pipeline_id="p", run_id="r", occurred_at=NOW, error="boom"),
+        SchemaChangedEvent(dataset_id="orders", batch_id="b1", previous_version=1, new_version=2, detected_at=NOW),
+        PipelineStartedEvent(pipeline_id="p", run_id="r", started_at=NOW),
+        PipelineFinishedEvent(pipeline_id="p", run_id="r", started_at=NOW, finished_at=NOW),
+        PipelineFailedEvent(pipeline_id="p", run_id="r", started_at=NOW, failed_at=NOW, error="boom"),
     ]
     assert len({e.dedup_key for e in events}) == len(events)
+
+
+def test_events_without_a_fact_key_dedupe_by_event_id():
+    event = DataQualityFailedEvent(
+        dataset_id="orders", scope_id="b1", check_id="row_count", reason_code="too_few", failed_at=NOW
+    )
+    dedup = Deduplicator()
+    assert dedup.is_new(event)
+    assert not dedup.is_new(event)
