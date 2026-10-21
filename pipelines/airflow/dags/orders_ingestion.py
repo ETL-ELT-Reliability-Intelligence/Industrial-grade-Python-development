@@ -7,35 +7,17 @@ The repo root must be on PYTHONPATH (docker-compose does this).
 
 import os
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from airflow.decorators import dag, task
 from airflow.operators.python import get_current_context
 
+from pipelines.airflow.config import make_publisher as _publisher
+from pipelines.airflow.config import make_store as _store
 from pipelines.airflow.pipeline_events import PipelineRunReporter
-from services.ingestion.publisher import InMemoryPublisher, KafkaPublisher
 from services.ingestion.service import IngestionService
 from services.ingestion.sources import MockApiSource
-from services.ingestion.storage import LocalRawStore, RawStore, S3RawStore
 
 PIPELINE_ID = "orders_ingestion"
-
-
-def _publisher():
-    servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS")
-    return KafkaPublisher(servers) if servers else InMemoryPublisher()
-
-
-def _store() -> RawStore:
-    endpoint = os.environ.get("S3_ENDPOINT_URL")
-    if endpoint:
-        return S3RawStore.from_endpoint(
-            endpoint,
-            os.environ.get("S3_BUCKET", "raw-data"),
-            os.environ.get("S3_ACCESS_KEY", "minioadmin"),
-            os.environ.get("S3_SECRET_KEY", "minioadmin"),
-        )
-    return LocalRawStore(Path(os.environ.get("RAW_DATA_DIR", "/data/raw")))
 
 
 def _on_failure(context) -> None:

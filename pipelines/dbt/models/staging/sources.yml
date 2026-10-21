@@ -1,0 +1,12 @@
+version: 2
+
+# Raw tables are loaded by the Airflow DAG (pipelines/airflow/load_postgres.py): all columns as text,
+# plus _batch_id / _loaded_at. Several batches (months) accumulate; staging keeps the latest row per key.
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: orders
+      - name: order_items
+      - name: order_payments
+      - name: customers

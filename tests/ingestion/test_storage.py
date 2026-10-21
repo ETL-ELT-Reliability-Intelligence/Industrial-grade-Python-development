@@ -78,3 +78,9 @@ def test_run_commit_roundtrip(store):
     store.save_run("orders", "scheduled__2026-09-26T10:00:00+00:00", ['{"a": 1}'])
     assert store.load_run("orders", "scheduled__2026-09-26T10:00:00+00:00") == ['{"a": 1}']
     assert store.load_run("orders", "other") is None
+
+
+def test_load_raw_returns_what_was_saved(store):
+    records = [{"id": 1, "name": "a", "missing": None}, {"id": 2, "name": "b", "missing": None}]
+    store.save_raw("orders", "2026-09-26-001", records)
+    assert store.load_raw("orders", "2026-09-26-001") == records

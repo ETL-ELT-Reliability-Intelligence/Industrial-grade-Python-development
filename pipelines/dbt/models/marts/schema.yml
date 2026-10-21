@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: One row per order with item and payment totals.
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+  - name: revenue
+    description: Daily revenue of non-canceled orders.
+    columns:
+      - name: day
+        tests: [unique, not_null]
