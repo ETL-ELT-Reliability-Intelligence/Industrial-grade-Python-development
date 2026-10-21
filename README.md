@@ -44,7 +44,7 @@
 ## Локальный запуск
 
 ```bash
-docker compose up -d            # Kafka, PostgreSQL, RustFS (S3), Airflow
+docker compose up -d
 pip install -e ".[dev,kafka,s3]"
 python -m services.ingestion --rows 100 --kafka localhost:9092 --s3-endpoint http://localhost:9000
 ```
@@ -56,6 +56,29 @@ python -m services.ingestion --rows 100 --kafka localhost:9092 --s3-endpoint htt
 | Airflow  | `http://localhost:8080`| —                     |
 
 Интеграционные тесты с реальным Kafka: `KAFKA_BOOTSTRAP_SERVERS=localhost:9092 pytest -m integration`.
+
+### Сквозное демо
+
+```bash
+bash scripts/demo.sh        # Windows: powershell -File scripts/demo.ps1
+```
+
+Нужен только Docker. Скрипт поднимает всё из `docker-compose.yml` и четыре раза запускает DAG `olist_ingestion`: три нормальных месяца и четвёртый, в котором upstream молча отдаёт 40% таблицы `order_payments`. Все шаги пайплайна при этом завершаются успешно, но решение о качестве для этого batch — `BLOCK`.
+
+```text
+Olist CSV ─► ingestion (по таблице = датасет) ─► S3 (jsonl) + dataset.ingested в Kafka
+                                  │                                   │
+                                  ▼                                   ▼
+                    PostgreSQL raw.* ─► dbt ─► analytics.*      stream-processor ─► batches, метрики,
+                    (DAG Airflow)       (fct_orders, revenue)    (мост)              quality_decisions
+                                                                                          │
+                                                                  backend API + дашборд ◄──┘ http://localhost:8000
+```
+
+- Данные: если в `data/olist/` лежат CSV [Brazilian E-Commerce (Olist)](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) (`olist_orders_dataset.csv`, `olist_order_items_dataset.csv`, `olist_order_payments_dataset.csv`, `olist_customers_dataset.csv`), используются они; иначе скрипт сам генерирует маленький набор в том же формате (`python -m services.ingestion.olist_sample`). Окно `window` выбирает месяц покупки, `volume_factors` имитирует тихую потерю данных по таблице.
+- `POSTGRES_PORT` по умолчанию 5433: на 5432 у многих уже стоит локальный PostgreSQL, и подключения с хоста уходят к нему, а не в контейнер.
+- Остановить и удалить всё: `docker compose down -v`.
+
 
 ### Почему объектное хранилище — RustFS, а не MinIO
 

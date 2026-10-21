@@ -1,0 +1,14 @@
+# Connection to the warehouse database; defaults match docker-compose (service names inside the network).
+# From the host: DBT_HOST=localhost DBT_PORT=<published postgres port>.
+olist:
+  target: default
+  outputs:
+    default:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'postgres') }}"
+      port: "{{ env_var('DBT_PORT', '5432') | as_number }}"
+      user: "{{ env_var('DBT_USER', 'reliability') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'reliability') }}"
+      dbname: "{{ env_var('DBT_DBNAME', 'reliability') }}"
+      schema: analytics
+      threads: 2

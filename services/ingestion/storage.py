@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -18,6 +19,9 @@ class RawStore(Protocol):
 
     def save_raw(self, dataset_id: str, batch_id: str, records: list[Record]) -> str:
         """Persist records and return their URI."""
+
+    def load_raw(self, dataset_id: str, batch_id: str) -> list[Record]:
+        """Read back the records saved for a batch."""
 
     def schema_version(self, dataset_id: str, fingerprint: str) -> tuple[int, int | None]:
         """Register fingerprint; return (version, previous_version_if_schema_changed)."""
@@ -46,6 +50,10 @@ class LocalRawStore:
             for record in records:
                 f.write(json.dumps(record, default=str) + "\n")
         return path.resolve().as_uri()
+
+    def load_raw(self, dataset_id: str, batch_id: str) -> list[Record]:
+        path = self._root / dataset_id / f"{batch_id}.jsonl"
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
     def schema_version(self, dataset_id: str, fingerprint: str) -> tuple[int, int | None]:
         path = self._root / dataset_id / "schema.json"
@@ -106,6 +114,10 @@ class S3RawStore:
         self._client.put_object(Bucket=self._bucket, Key=key, Body=body.encode("utf-8"))
         return f"s3://{self._bucket}/{key}"
 
+    def load_raw(self, dataset_id: str, batch_id: str) -> list[Record]:
+        body = self._client.get_object(Bucket=self._bucket, Key=f"{dataset_id}/{batch_id}.jsonl")["Body"].read()
+        return [json.loads(line) for line in body.decode("utf-8").splitlines() if line]
+
     def schema_version(self, dataset_id: str, fingerprint: str) -> tuple[int, int | None]:
         key = f"{dataset_id}/schema.json"
         try:
@@ -140,3 +152,16 @@ class S3RawStore:
     @staticmethod
     def _run_key(dataset_id: str, run_id: str) -> str:
         return f"{dataset_id}/runs/{_run_name(run_id)}.json"
+
+
+def store_from_env() -> RawStore:
+    """S3-compatible store if S3_ENDPOINT_URL is set, else the local RAW_DATA_DIR."""
+    endpoint = os.environ.get("S3_ENDPOINT_URL")
+    if endpoint:
+        return S3RawStore.from_endpoint(
+            endpoint,
+            os.environ.get("S3_BUCKET", "raw-data"),
+            os.environ.get("S3_ACCESS_KEY", "minioadmin"),
+            os.environ.get("S3_SECRET_KEY", "minioadmin"),
+        )
+    return LocalRawStore(Path(os.environ.get("RAW_DATA_DIR", "/data/raw")))

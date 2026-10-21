@@ -83,6 +83,7 @@ jobs:
         run: >-
           uv run --no-sync pytest
           tests/storage/test_repositories.py tests/application/test_postgres.py
+          tests/integration/test_load_postgres.py tests/integration/test_stream_processor.py
           --junitxml=test-results/postgres.xml
       - uses: actions/upload-artifact@v4
         if: always()
@@ -114,7 +115,7 @@ jobs:
           docker compose logs kafka
           exit 1
       - name: Run ingestion -> Kafka -> consumer test
-        run: uv run --no-sync pytest tests/integration --junitxml=test-results/kafka.xml
+        run: uv run --no-sync pytest tests/integration/test_kafka_flow.py --junitxml=test-results/kafka.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
