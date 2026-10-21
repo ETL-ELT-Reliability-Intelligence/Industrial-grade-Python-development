@@ -1,3 +1,4 @@
+import io
 import json
 
 import pytest
@@ -25,7 +26,33 @@ def test_blank_lines_are_skipped(tmp_path):
 
 def test_other_schemes_are_rejected():
     with pytest.raises(RawDataError, match="scheme"):
-        read_raw("s3://bucket/orders/batch.jsonl")
+        read_raw("http://example.com/orders/batch.jsonl")
+
+
+def test_reads_records_from_an_s3_uri(monkeypatch):
+    boto3 = pytest.importorskip("boto3")
+
+    class Client:
+        def get_object(self, Bucket, Key):
+            assert (Bucket, Key) == ("raw-data", "orders/batch.jsonl")
+            return {"Body": io.BytesIO(b'{"id": 1}\n\n{"id": 2}\n')}
+
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: Client())
+
+    assert read_raw("s3://raw-data/orders/batch.jsonl") == [{"id": 1}, {"id": 2}]
+
+
+def test_a_missing_s3_object_is_a_raw_data_error(monkeypatch):
+    boto3 = pytest.importorskip("boto3")
+
+    class Client:
+        def get_object(self, Bucket, Key):
+            raise KeyError("NoSuchKey")
+
+    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: Client())
+
+    with pytest.raises(RawDataError, match="cannot read"):
+        read_raw("s3://raw-data/missing.jsonl")
 
 
 def test_malformed_json_reports_the_line(tmp_path):

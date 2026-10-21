@@ -121,7 +121,7 @@ services:
     volumes:
       - .:/app:ro
 
-  # DRAFT bridge dataset.ingested -> quality decisions in PostgreSQL (see services/stream_processor).
+  # Stream processor: dataset.ingested / pipeline.* events -> batches, metrics, quality decisions in PostgreSQL (docs/stream_processor.md).
   stream-processor:
     image: python:3.11-slim
     working_dir: /app
