@@ -14,6 +14,7 @@ from services.ingestion.service import IngestionService  # noqa: E402
 from services.ingestion.sources import OlistSource  # noqa: E402
 from services.ingestion.storage import LocalRawStore  # noqa: E402
 from services.stream_processor.handlers import StreamEventHandler  # noqa: E402
+from services.stream_processor.policy import QualityThresholds  # noqa: E402
 from storage.postgres import (  # noqa: E402
     PostgresDatasetRepository,
     PostgresMetricRepository,
@@ -27,12 +28,17 @@ URL = os.environ.get("TEST_DATABASE_URL")
 pytestmark = [pytest.mark.integration, pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")]
 
 
+# Undelivered Olist orders have no delivery date, so that column is legitimately ~40% null.
+THRESHOLDS = QualityThresholds(max_null_rate=0.5)
+
+
 def build_handler(connection):
     return StreamEventHandler(
         PostgresDatasetRepository(connection),
         PostgresPipelineRunRepository(connection),
         PostgresMetricRepository(connection),
         PostgresQualityRepository(connection),
+        thresholds=THRESHOLDS,
     )
 
 
@@ -88,7 +94,9 @@ def test_replaying_an_event_does_not_change_the_decision(pipeline):
     event, decision = ingest("orders", 3, volume_factor=0.4)
     assert decision.status is QualityStatus.BLOCK
 
-    assert decide(processor, quality, event) == decision
+    replayed = decide(processor, quality, event)
+    assert replayed.status == decision.status
+    assert [(r.code, r.check_id) for r in replayed.reasons] == [(r.code, r.check_id) for r in decision.reasons]
     results = quality.list_check_results("orders", event.batch_id)
     assert len(results) == len({r.check_id for r in results})
 

@@ -1,5 +1,7 @@
 import io
 import json
+import sys
+import types
 
 import pytest
 
@@ -30,26 +32,22 @@ def test_other_schemes_are_rejected():
 
 
 def test_reads_records_from_an_s3_uri(monkeypatch):
-    boto3 = pytest.importorskip("boto3")
-
     class Client:
         def get_object(self, Bucket, Key):
             assert (Bucket, Key) == ("raw-data", "orders/batch.jsonl")
             return {"Body": io.BytesIO(b'{"id": 1}\n\n{"id": 2}\n')}
 
-    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: Client())
+    monkeypatch.setitem(sys.modules, "boto3", types.SimpleNamespace(client=lambda *args, **kwargs: Client()))
 
     assert read_raw("s3://raw-data/orders/batch.jsonl") == [{"id": 1}, {"id": 2}]
 
 
 def test_a_missing_s3_object_is_a_raw_data_error(monkeypatch):
-    boto3 = pytest.importorskip("boto3")
-
     class Client:
         def get_object(self, Bucket, Key):
             raise KeyError("NoSuchKey")
 
-    monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: Client())
+    monkeypatch.setitem(sys.modules, "boto3", types.SimpleNamespace(client=lambda *args, **kwargs: Client()))
 
     with pytest.raises(RawDataError, match="cannot read"):
         read_raw("s3://raw-data/missing.jsonl")

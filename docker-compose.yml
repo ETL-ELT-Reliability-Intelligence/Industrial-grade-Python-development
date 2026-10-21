@@ -132,12 +132,12 @@ services:
       migrate:
         condition: service_completed_successfully
       kafka:
-        condition: service_starte
         condition: service_started
     restart: unless-stopped
     environment:
       PYTHONPATH: /app
       KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      QUALITY_MAX_NULL_RATE: "0.5"  # Olist orders: undelivered ones have no delivery date
       DATABASE_URL: postgresql://reliability:reliability@postgres:5432/reliability
       S3_ENDPOINT_URL: http://rustfs:9000
       S3_BUCKET: raw-data
