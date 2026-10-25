@@ -11,7 +11,9 @@ T = TypeVar("T")
 
 
 def page(items: list[T], limit: int, offset: int) -> Page[T]:
-    return Page(items=items[:limit], limit=limit, offset=offset, has_more=len(items) > limit)
+    return Page(
+        items=items[:limit], limit=limit, offset=offset, has_more=len(items) > limit
+    )
 
 
 class DatasetQueries:
@@ -29,11 +31,17 @@ class DatasetQueries:
 
     def batches(self, dataset_id: str, limit: int, offset: int) -> Page[Batch]:
         self.dataset(dataset_id)
-        return page(self.repository.list_batches(dataset_id, limit + 1, offset), limit, offset)
+        return page(
+            self.repository.list_batches(dataset_id, limit + 1, offset), limit, offset
+        )
 
     def scopes(self, dataset_id: str, limit: int, offset: int) -> Page[QualityScope]:
         self.dataset(dataset_id)
-        return page(self.repository.list_quality_scopes(dataset_id, limit + 1, offset), limit, offset)
+        return page(
+            self.repository.list_quality_scopes(dataset_id, limit + 1, offset),
+            limit,
+            offset,
+        )
 
     def quality(self, dataset_id: str, scope_id: str) -> ScopeQuality:
         self.dataset(dataset_id)

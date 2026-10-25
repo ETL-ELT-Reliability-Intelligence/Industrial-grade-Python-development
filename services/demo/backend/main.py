@@ -18,7 +18,9 @@ def create_app(repository: IncidentRepository | None = None) -> FastAPI:
         version="0.1.0",
         description="Read-only iteration 1. Demo data; no live platform connection.",
     )
-    app.state.repository = repository if repository is not None else DemoIncidentRepository()
+    app.state.repository = (
+        repository if repository is not None else DemoIncidentRepository()
+    )
     app.include_router(router)
 
     @app.get("/health", tags=["system"])

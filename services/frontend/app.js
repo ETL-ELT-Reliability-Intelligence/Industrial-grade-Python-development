@@ -173,8 +173,9 @@ function loadDataset() {
 function loadBatches() {
   if (!selection.dataset) return message("batches", "Сначала выберите dataset.");
   return load("batches", listPath(`${datasetPath()}/batches`, "batches"), (data, root) => {
-    if (data.items.length) root.append(table(["Batch ID", "Строк", "Получен", "Версия схемы"], data.items.map(item => [
+    if (data.items.length) root.append(table(["Batch ID", "Строк", "Получен", "Версия схемы", "Источник"], data.items.map(item => [
       item.batch_id, numbers.format(item.records), timestamp(item.received_at), item.schema_version,
+      item.object_key ?? "Не указан",
     ])));
     else root.append(node("p", "На этой странице нет сохранённых загрузок.", "message"));
     pagination(root, data, "batches", loadBatches);
