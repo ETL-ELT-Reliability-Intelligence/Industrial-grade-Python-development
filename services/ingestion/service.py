@@ -17,6 +17,14 @@ class IngestionService:
     Delivery is at-least-once. With a `run_id`, ingestion is idempotent: the events of a run are
     committed to the store before publishing, so retrying the same run (e.g. an Airflow task retry)
     republishes the same events instead of creating a second batch. Consumers dedupe by `dedup_key`.
+
+    Known limits:
+    - A crash after `save_raw` but before `save_run` leaves an orphan raw object; the retry of that
+      run fetches again and gets the next batch number. Orphans are harmless: nothing was published.
+    - A crash while publishing may have delivered only some events of a run; the retry republishes
+      all of them with the same `dedup_key`s, so consumers must dedupe.
+    - Batch numbers are not reserved atomically. Two concurrent runs for one dataset/day may pick the
+      same number; the local store refuses to overwrite and the loser retries once with a fresh number.
     """
 
     def __init__(
@@ -42,9 +50,12 @@ class IngestionService:
 
         received_at = self._clock()
         day = received_at.strftime("%Y-%m-%d")
-        batch_id = f"{day}-{self._store.next_batch_number(batch.dataset_id, day):03d}"
-
-        raw_uri = self._store.save_raw(batch.dataset_id, batch_id, batch.records)
+        try:
+            batch_id = f"{day}-{self._store.next_batch_number(batch.dataset_id, day):03d}"
+            raw_uri = self._store.save_raw(batch.dataset_id, batch_id, batch.records)
+        except FileExistsError:  # lost a race for the batch number; the next listing sees the winner
+            batch_id = f"{day}-{self._store.next_batch_number(batch.dataset_id, day):03d}"
+            raw_uri = self._store.save_raw(batch.dataset_id, batch_id, batch.records)
         version, previous = self._store.schema_version(
             batch.dataset_id, schema_fingerprint(column_names(batch.records))
         )

@@ -157,3 +157,92 @@ def test_different_runs_get_different_batches(tmp_path):
 def test_without_run_id_every_call_is_a_new_batch(service):
     ids = {service.ingest(MockApiSource(base_rows=5)).batch_id for _ in range(2)}
     assert len(ids) == 2
+
+
+class CrashBeforeCommitStore(LocalRawStore):
+    """Raw data and schema version are written, then the process dies before the run manifest."""
+
+    crash = True
+
+    def save_run(self, dataset_id, run_id, events):
+        if self.crash:
+            self.crash = False
+            raise RuntimeError("process died before save_run")
+        super().save_run(dataset_id, run_id, events)
+
+
+def test_crash_between_save_raw_and_save_run_leaves_orphan_batch(tmp_path):
+    publisher = InMemoryPublisher()
+    service = IngestionService(CrashBeforeCommitStore(tmp_path), publisher, clock=lambda: NOW)
+
+    with pytest.raises(RuntimeError):
+        service.ingest(MockApiSource(base_rows=5), run_id="r1")
+    assert publisher.events == []  # nothing was published, so the orphan is invisible to consumers
+
+    event = service.ingest(MockApiSource(base_rows=5), run_id="r1")
+
+    assert event.batch_id == "2026-09-26-002"
+    assert sorted(p.name for p in (tmp_path / "orders").glob("*.jsonl")) == [
+        "2026-09-26-001.jsonl",
+        "2026-09-26-002.jsonl",
+    ]
+    assert publisher.events == [event]
+
+
+class FailOnSecondPublish(InMemoryPublisher):
+    """The first event of a run reaches Kafka, the second one does not."""
+
+    def __init__(self):
+        super().__init__()
+        self.fail = True
+
+    def publish(self, event):
+        if self.fail and self.events:
+            self.fail = False
+            raise RuntimeError("Kafka delivery failed")
+        super().publish(event)
+
+
+def test_partial_publish_republishes_all_events_with_same_dedup_keys(tmp_path):
+    publisher = FailOnSecondPublish()
+    service = IngestionService(LocalRawStore(tmp_path), publisher, clock=lambda: NOW)
+    service.ingest(FixedSource([{"id": 1}]), run_id="r1")
+    publisher.events.clear()
+
+    with pytest.raises(RuntimeError):
+        service.ingest(FixedSource([{"id": 1, "extra": 1}]), run_id="r2")
+    delivered = list(publisher.events)
+    assert [type(e) for e in delivered] == [SchemaChangedEvent]
+
+    service.ingest(FixedSource([{"id": 1, "extra": 1}]), run_id="r2")
+
+    retried = publisher.events[len(delivered):]
+    assert [type(e) for e in retried] == [SchemaChangedEvent, DatasetIngestedEvent]
+    assert retried[0] == delivered[0]  # duplicate: the consumer has to dedupe by dedup_key
+    assert retried[0].dedup_key == delivered[0].dedup_key
+    assert len({e.dedup_key for e in publisher.events}) == 2
+
+
+class StaleBatchNumberStore(LocalRawStore):
+    """Another run listed the directory at the same moment: the first number we get is already taken."""
+
+    stale = True
+
+    def next_batch_number(self, dataset_id, day):
+        if self.stale:
+            self.stale = False
+            return 1
+        return super().next_batch_number(dataset_id, day)
+
+
+def test_lost_race_for_batch_number_does_not_overwrite_other_batch(tmp_path):
+    winner = IngestionService(LocalRawStore(tmp_path), InMemoryPublisher(), clock=lambda: NOW)
+    first = winner.ingest(FixedSource([{"id": 1}]))
+    loser = IngestionService(StaleBatchNumberStore(tmp_path), InMemoryPublisher(), clock=lambda: NOW)
+
+    second = loser.ingest(FixedSource([{"id": 2}]))
+
+    assert (first.batch_id, second.batch_id) == ("2026-09-26-001", "2026-09-26-002")
+    store = LocalRawStore(tmp_path)
+    assert store.load_raw("orders", first.batch_id) == [{"id": 1}]
+    assert store.load_raw("orders", second.batch_id) == [{"id": 2}]

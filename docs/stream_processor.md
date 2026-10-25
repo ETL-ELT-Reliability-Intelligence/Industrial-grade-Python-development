@@ -11,7 +11,7 @@
 
 | Путь | Назначение |
 | --- | --- |
-| `services/stream_processor/raw.py` | Чтение JSONL-батчей по локальному URI `file://` |
+| `services/stream_processor/raw.py` | Чтение JSONL-батчей по URI `file://` и `s3://` (MinIO) |
 | `services/stream_processor/statistics.py` | Расчёт `row_count`, плоской схемы, `null_rate` и `distinct_count` |
 | `services/stream_processor/policy.py` | Пороги проверок (`QualityThresholds`) и построение `Constraint` |
 | `services/stream_processor/publisher.py` | Публикация `data.quality.failed` с детерминированным `event_id` |

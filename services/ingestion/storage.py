@@ -46,7 +46,7 @@ class LocalRawStore:
     def save_raw(self, dataset_id: str, batch_id: str, records: list[Record]) -> str:
         path = self._root / dataset_id / f"{batch_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as f:
+        with path.open("x", encoding="utf-8") as f:  # never overwrite a batch another run just wrote
             for record in records:
                 f.write(json.dumps(record, default=str) + "\n")
         return path.resolve().as_uri()
