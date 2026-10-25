@@ -1,12 +1,12 @@
 """Run with: python -m uvicorn services.backend.main:app."""
 
+import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .api import Repository, router
@@ -19,7 +19,8 @@ RepositoryFactory = Callable[[], AbstractContextManager[ReadRepository]]
 
 def create_app(*, repository_factory: RepositoryFactory | None = None) -> FastAPI:
     app = FastAPI(
-        title="ETL/ELT Reliability Intelligence — Dataset API", version="0.2.0",
+        title="ETL/ELT Reliability Intelligence — Dataset API",
+        version="0.2.0",
         description="Read-only access to datasets and stored quality evidence. No quality evaluation.",
     )
     dsn = os.environ.get("DATABASE_URL")
@@ -27,11 +28,13 @@ def create_app(*, repository_factory: RepositoryFactory | None = None) -> FastAP
     app.include_router(router)
 
     @app.exception_handler(StorageUnavailable)
-    async def unavailable(request: Request, exc: StorageUnavailable):
-        return JSONResponse(status_code=503, content={"detail": "State store unavailable"})
+    async def unavailable(request: Request, exc: StorageUnavailable) -> JSONResponse:
+        return JSONResponse(
+            status_code=503, content={"detail": "State store unavailable"}
+        )
 
     @app.exception_handler(DatasetNotFound)
-    async def not_found(request: Request, exc: DatasetNotFound):
+    async def not_found(request: Request, exc: DatasetNotFound) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": "Dataset not found"})
 
     @app.get("/health", tags=["system"])
@@ -44,7 +47,7 @@ def create_app(*, repository_factory: RepositoryFactory | None = None) -> FastAP
         return {"status": "ok"}
 
     @app.get("/", include_in_schema=False)
-    def dashboard():
+    def dashboard() -> Response:
         if not (FRONTEND_DIR / "index.html").exists():
             return JSONResponse({"detail": "Dataset API; see /docs for endpoints"})
         return FileResponse(FRONTEND_DIR / "index.html")

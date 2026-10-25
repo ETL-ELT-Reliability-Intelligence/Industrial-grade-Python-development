@@ -1,8 +1,8 @@
 """Capture diagnostics before browser contexts close, including inline contexts."""
 
+import re
 from contextlib import contextmanager
 from pathlib import Path
-import re
 
 import pytest
 
@@ -39,7 +39,9 @@ def browser_context(request, browser):
                     directory.mkdir(parents=True, exist_ok=True)
                     try:
                         for index, page in enumerate(context.pages):
-                            page.screenshot(path=str(directory / f"page-{index}.png"), timeout=5000)
+                            page.screenshot(
+                                path=str(directory / f"page-{index}.png"), timeout=5000
+                            )
                     finally:
                         context.tracing.stop(path=str(directory / "trace.zip"))
                 else:

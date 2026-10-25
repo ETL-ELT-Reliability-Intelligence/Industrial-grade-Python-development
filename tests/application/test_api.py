@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from services.backend.main import create_app
 from services.backend.repository import StorageUnavailable
@@ -10,13 +10,20 @@ from tests.application.support import MemoryRepository
 
 @pytest.fixture
 def client():
-    with TestClient(create_app(repository_factory=MemoryRepository().factory)) as client:
+    with TestClient(
+        create_app(repository_factory=MemoryRepository().factory)
+    ) as client:
         yield client
 
 
 def test_catalog_pagination_and_empty_dataset(client):
     first = client.get("/api/v1/datasets?limit=1").json()
-    assert first == {"items": [client.get("/api/v1/datasets/empty").json()], "limit": 1, "offset": 0, "has_more": True}
+    assert first == {
+        "items": [client.get("/api/v1/datasets/empty").json()],
+        "limit": 1,
+        "offset": 0,
+        "has_more": True,
+    }
     second = client.get("/api/v1/datasets?limit=1&offset=1").json()
     assert second["items"][0]["dataset_id"] == "orders"
     assert second["has_more"] is False
@@ -42,11 +49,17 @@ def test_quality_preserves_evidence_and_scope_meaning(client):
 
 def test_unknown_scope_is_missing_evidence_not_pass(client):
     assert client.get("/api/v1/datasets/orders/quality?scope_id=missing").json() == {
-        "dataset_id": "orders", "scope_id": "missing", "checks": [], "decision": None, "decided_at": None,
+        "dataset_id": "orders",
+        "scope_id": "missing",
+        "checks": [],
+        "decision": None,
+        "decided_at": None,
     }
 
 
-@pytest.mark.parametrize("suffix", ["", "/batches", "/quality-scopes", "/quality?scope_id=window-1"])
+@pytest.mark.parametrize(
+    "suffix", ["", "/batches", "/quality-scopes", "/quality?scope_id=window-1"]
+)
 def test_unknown_dataset(client, suffix):
     response = client.get("/api/v1/datasets/missing" + suffix)
     assert response.status_code == 404
@@ -54,7 +67,9 @@ def test_unknown_dataset(client, suffix):
 
 
 @pytest.mark.parametrize("query", ["limit=0", "limit=201", "offset=-1", "limit=abc"])
-@pytest.mark.parametrize("path", ["/datasets", "/datasets/orders/batches", "/datasets/orders/quality-scopes"])
+@pytest.mark.parametrize(
+    "path", ["/datasets", "/datasets/orders/batches", "/datasets/orders/quality-scopes"]
+)
 def test_invalid_pagination(client, path, query):
     assert client.get("/api/v1" + path + "?" + query).status_code == 422
 

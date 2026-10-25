@@ -41,7 +41,9 @@ class Observation(BaseModel):
 class RootCauseCandidate(BaseModel):
     dataset_id: str
     description: str
-    score: float = Field(ge=0, le=1, description="Ranking score, not causal probability")
+    score: float = Field(
+        ge=0, le=1, description="Ranking score, not causal probability"
+    )
 
 
 class TimelineEvent(BaseModel):

@@ -37,7 +37,8 @@ function readSelection() {
 
 function select(dataset, scope = null) {
   const url = new URL(location.href);
-  url.search = "";
+  url.searchParams.delete("dataset");
+  url.searchParams.delete("scope");
   if (dataset) url.searchParams.set("dataset", dataset);
   if (dataset && scope) url.searchParams.set("scope", scope);
   history.pushState(null, "", url);
@@ -124,6 +125,9 @@ function datasetPath() { return `/datasets/${encodeURIComponent(selection.datase
 
 function table(headers, rows) {
   const wrap = node("div", undefined, "table-wrap");
+  wrap.tabIndex = 0;
+  wrap.setAttribute("role", "region");
+  wrap.setAttribute("aria-label", `Таблица: ${headers.join(", ")}`);
   const grid = node("table");
   const head = node("thead");
   const tr = node("tr");
@@ -146,7 +150,8 @@ function loadCatalog() {
       entry.className = "catalog-item incident-row";
       entry.setAttribute("aria-label", item.dataset_id);
       entry.dataset.dataset = item.dataset_id;
-      const registered = node("span", "Зарегистрирован: ", "incident-time");
+      const registered = node("span", undefined, "incident-time");
+      registered.append(node("span", "Зарегистрирован: ", "registered-label"));
       registered.append(timestamp(item.created_at));
       entry.replaceChildren(node("strong", item.dataset_id, "incident-title"), registered);
       root.append(entry);
@@ -173,8 +178,9 @@ function loadDataset() {
 function loadBatches() {
   if (!selection.dataset) return message("batches", "Сначала выберите dataset.");
   return load("batches", listPath(`${datasetPath()}/batches`, "batches"), (data, root) => {
-    if (data.items.length) root.append(table(["Batch ID", "Строк", "Получен", "Версия схемы"], data.items.map(item => [
+    if (data.items.length) root.append(table(["Batch ID", "Строк", "Получен", "Версия схемы", "Источник"], data.items.map(item => [
       item.batch_id, numbers.format(item.records), timestamp(item.received_at), item.schema_version,
+      item.object_key ?? "Не указан",
     ])));
     else root.append(node("p", "На этой странице нет сохранённых загрузок.", "message"));
     pagination(root, data, "batches", loadBatches);
