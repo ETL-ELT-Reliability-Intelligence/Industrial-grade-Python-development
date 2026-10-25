@@ -43,9 +43,11 @@ PASS/FAIL/UNKNOWN относятся к проверкам; PASS/WARN/BLOCK — 
 
 ## Проверки
 
+Подготовьте окружение по [инструкции приложения](README.md#установка-и-запуск).
+
 ```powershell
 node --check services/frontend/app.js
-.venv/Scripts/python.exe -m pytest tests/application/test_dashboard.py -q
+uv run --no-sync python -m pytest tests/application/test_dashboard.py -q
 ```
 
 Браузерные сценарии идут через настоящий ASGI API. Отдельный сценарий с
