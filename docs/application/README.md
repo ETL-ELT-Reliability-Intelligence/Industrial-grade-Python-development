@@ -11,11 +11,11 @@ quality checks и не вычисляет policy, аномалии или инц
 Python 3.11+. Команды из корня репозитория; ниже PowerShell.
 Зависимости объявлены в корневом `pyproject.toml`, версии зафиксированы в `uv.lock`.
 Отдельные списки зависимостей для backend не поддерживаются.
-Инструменты тестирования находятся в dependency groups `dev` и `browser`;
-`storage` остаётся extra для миграций. Группа `dev` включена uv по умолчанию.
+Используем существующие extras: `dev` для тестов и Ruff, `browser` для
+браузерных тестов, `storage` для миграций.
 
 ```powershell
-uv sync --locked --group dev --extra storage --group browser
+uv sync --locked --extra dev --extra storage --extra browser
 docker compose -f docker-compose.yml up -d --wait postgres
 $env:DATABASE_URL = 'postgresql://reliability:reliability@127.0.0.1:5432/reliability'
 uv run --no-sync python -m alembic -c storage/postgres/alembic.ini upgrade head
@@ -25,8 +25,8 @@ uv run --no-sync python -m uvicorn services.backend.main:app --host 127.0.0.1 --
 Можно использовать существующий PostgreSQL вместо Docker: задать его `DATABASE_URL`
 и применить миграции коллег. Backend сам миграции не применяет.
 Команды `uv run --no-sync` ниже используют окружение, подготовленное `uv sync`.
-После изменения зависимостей повторите синхронизацию с нужными группами и extras.
-Для запуска backend без инструментов разработки достаточно `uv sync --locked --no-dev`;
+После изменения зависимостей повторите синхронизацию с нужными extras.
+Для запуска backend без инструментов разработки достаточно `uv sync --locked`;
 для миграций и CSV-примера добавьте `--extra storage`.
 В Linux/macOS команды uv те же, переменные задаются через `export`.
 

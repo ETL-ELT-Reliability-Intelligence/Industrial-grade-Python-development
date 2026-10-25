@@ -11,7 +11,7 @@ from services.demo.backend.main import create_app
 
 playwright_api = pytest.importorskip(
     "playwright.sync_api",
-    reason="Run uv sync --locked --group dev --group browser for UI checks",
+    reason="Run uv sync --locked --extra dev --extra browser for UI checks",
 )
 expect = playwright_api.expect
 

@@ -10,14 +10,14 @@
 Перед запуском подготовьте окружение из корня репозитория:
 
 ```powershell
-uv sync --locked --group dev --extra storage --group browser
+uv sync --locked --extra dev --extra storage --extra browser
 ```
 
-`dev` и `browser` — dependency groups: тесты/Ruff и браузерные тесты соответственно.
-`storage` — существующий extra для миграций. Группа `dev` включается uv по умолчанию;
-для одного backend без инструментов разработки используйте `uv sync --locked --no-dev`.
+Используем существующие extras проекта: `dev` — тесты и Ruff, `browser` —
+браузерные тесты, `storage` — миграции. Для одного backend без инструментов
+разработки достаточно `uv sync --locked`.
 Команды `uv run --no-sync` ниже используют уже подготовленное окружение;
-после изменения зависимостей повторите синхронизацию с нужными группами и extras.
+после изменения зависимостей повторите синхронизацию с нужными extras.
 
 Обычный `uv run --no-sync python -m services.backend.seed` по-прежнему создаёт заранее заданные
 измерения для проверки состояний интерфейса.
