@@ -30,8 +30,8 @@ h2 { font-size: 13px; margin: 0; }
 h3 { font-size: 12px; margin: 0 0 8px; padding: 4px 6px; background: var(--desktop); border: 1px solid var(--line); }
 .subtitle { color: var(--muted); margin: 4px 0 0; }
 .button { background: var(--desktop); border: 2px solid; border-color: var(--light) var(--dark) var(--dark) var(--light); color: var(--ink); padding: 4px 12px; cursor: pointer; white-space: nowrap; }
-.button:active { border-color: var(--dark) var(--light) var(--light) var(--dark); }
-.button:disabled { color: #666; cursor: wait; }
+.button:active:not(:disabled) { border-color: var(--dark) var(--light) var(--light) var(--dark); }
+.button:disabled { color: #777; background: var(--desktop); border-color: var(--dark) var(--light) var(--light) var(--dark); box-shadow: inset 1px 1px 0 rgb(0 0 0 / 15%); padding: 5px 11px 3px 13px; text-shadow: none; cursor: default; }
 .demo-banner { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px; border: 2px solid; border-color: var(--line) var(--light) var(--light) var(--line); background: var(--desktop); }
 .snapshot { font-size: 11px; color: var(--muted); margin: 8px 0 12px; }
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }

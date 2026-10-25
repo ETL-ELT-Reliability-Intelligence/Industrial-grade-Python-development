@@ -1,8 +1,6 @@
 # Три оформления dataset-экрана
 
-В `feature/design-metamarphoses` оставлены Windows XP / Classic, серверы CS 1.6
-и Design Wizard. Ветка обновлена fast-forward до application-layer#3 (`1f0af2e`).
-Steam, Grid Logic, Measured Bloom, их стили, иллюстрации и макеты удалены.
+В приложении доступны Windows XP / Classic, серверы CS 1.6 и Design Wizard.
 
 ## Основное приложение
 
@@ -50,28 +48,9 @@ Wizard использует `#C0C0C0`, `#000080`, белые таблицы и �
 исходный запрос — `services/frontend/images/wizard-prompt.txt`. Изображение
 локальное, не требует внешнего сервиса для показа.
 
-## Просмотр без PostgreSQL
-
-```powershell
-uv run --no-sync python experiments/design-lab/preview.py
-```
-
-Галерея: http://127.0.0.1:8010/ . Она открывает **тот же актуальный frontend**
-на `/app`, подключённый к настоящим маршрутам FastAPI с отдельным репозиторием
-фиксированных данных в памяти. Видимая плашка сообщает, что это тестовый просмотр.
-Выбор датасета/scope, пустое состояние и обновление работают. Такой запуск не
-проверяет интеграцию с PostgreSQL и не подменяет production backend при ошибке БД.
-Обычное приложение запускается прежней командой на 8000 с `DATABASE_URL`.
-
 ## Проверки
 
-`tests/application/test_dashboard.py` проверяет общие сценарии во всех трёх темах.
-Проверки тем дополнительно охватывают URL/localStorage, клавиатуру, отсутствие
-новых API-запросов при переключении, сохранение пагинации, скрытие помощника и
-ширину 390 px. PostgreSQL-сценарии требуют выделенной `TEST_DATABASE_URL`.
-
-При запущенном preview скриншоты обновляются командой:
-
-```powershell
-uv run --no-sync python experiments/design-lab/verify.py
-```
+`tests/application/test_dashboard.py` проверяет общие сценарии во всех трёх темах:
+URL/localStorage, клавиатуру, отсутствие новых API-запросов при переключении,
+сохранение пагинации, скрытие помощника и ширину 390 px.
+PostgreSQL-сценарии требуют выделенной `TEST_DATABASE_URL`.

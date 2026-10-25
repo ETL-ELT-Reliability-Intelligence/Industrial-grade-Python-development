@@ -63,8 +63,5 @@
       savePreference(assistantKey, String(assistantHidden));
       updateControls();
     });
-    if (document.body.dataset.preview === "true") {
-      document.getElementById("preview-notice").hidden = false;
-    }
   });
 })();
