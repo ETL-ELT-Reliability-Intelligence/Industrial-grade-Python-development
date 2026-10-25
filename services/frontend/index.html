@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="classic">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Datasets и качество — Reliability Intelligence</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=classic-layout-2">
-  <script src="/assets/app.js?v=classic-layout-2" defer></script>
+  <script src="/assets/themes.js?v=1"></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=themes-1">
+  <link rel="stylesheet" href="/assets/themes.css?v=1">
+  <script src="/assets/app.js?v=themes-1" defer></script>
 </head>
 <body>
   <header class="sidebar">
@@ -13,30 +15,41 @@
     <nav class="menu-bar" aria-label="Основная навигация">
       <a class="nav-item active" href="/" aria-current="page">Datasets и качество</a>
       <a class="nav-item" href="/docs" target="_blank" rel="noopener">Документация API</a>
+      <div class="theme-picker"><label for="theme-select">Оформление</label><select id="theme-select"><option value="classic">Windows XP / Classic</option><option value="cs">Серверы CS 1.6</option><option value="wizard">Design Wizard</option></select></div>
     </nav>
   </header>
   <main>
     <header class="page-header">
       <div><h1>Надёжность данных</h1><p class="subtitle">Datasets, загрузки и результаты проверок качества.</p></div>
-      <button id="refresh" type="button" class="button">Обновить данные</button>
+      <div class="page-actions"><button id="assistant-toggle" type="button" class="button" aria-pressed="true" aria-controls="wizard-assistant" hidden>Помощник</button><button id="refresh" type="button" class="button">Обновить данные</button></div>
     </header>
+    <p id="preview-notice" class="demo-banner" hidden>Просмотр дизайнов: фиксированные тестовые данные. Изменения в PostgreSQL здесь не отображаются.</p>
     <p id="refreshed-at" class="snapshot" role="status">Данные ещё не загружены.</p>
     <div class="workspace">
+      <div class="catalog-column">
       <section class="panel" aria-labelledby="catalog-heading">
         <div class="panel-header"><h2 id="catalog-heading">Datasets</h2></div>
+        <div class="catalog-columns" aria-hidden="true"><span>Dataset</span><span>Регистрация</span></div>
         <div id="catalog" aria-live="polite"></div>
       </section>
+      <aside id="wizard-assistant" class="panel wizard-assistant" aria-labelledby="assistant-heading" hidden>
+        <div class="panel-header"><h2 id="assistant-heading">Мастер данных</h2></div>
+        <img src="/assets/images/wizard.png" alt="Low-poly волшебник в синем колпаке работает за бежевым CRT-компьютером" width="1448" height="1086" loading="lazy">
+        <div class="assistant-tip"><strong>Подсказка</strong><p>Сначала выберите датасет, затем область проверки. Ноль и отсутствие измерения — разные значения; решение policy относится к выбранной области.</p></div>
+        <p class="assistant-note">Справка по экрану. Помощник не анализирует данные.</p>
+      </aside>
+      </div>
       <section id="dataset-detail" class="panel detail-panel" aria-label="Карточка dataset">
         <div id="dataset" aria-live="polite"></div>
-        <section class="detail-section" aria-labelledby="batches-heading">
+        <section id="batches-section" class="detail-section" aria-labelledby="batches-heading">
           <h3 id="batches-heading">Загрузки</h3>
           <div id="batches" aria-live="polite"></div>
         </section>
-        <section class="detail-section" aria-labelledby="scopes-heading">
+        <section id="scopes-section" class="detail-section" aria-labelledby="scopes-heading">
           <h3 id="scopes-heading">Области проверки качества</h3>
           <div id="scopes" aria-live="polite"></div>
         </section>
-        <section class="detail-section" aria-labelledby="quality-heading">
+        <section id="quality-section" class="detail-section" aria-labelledby="quality-heading">
           <h3 id="quality-heading">Результаты выбранной области</h3><div id="quality" aria-live="polite"></div>
         </section>
       </section>

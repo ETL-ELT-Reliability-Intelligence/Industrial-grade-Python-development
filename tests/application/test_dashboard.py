@@ -32,8 +32,13 @@ def browser():
 
 
 @contextmanager
-def browser_page(browser_context, repository_factory):
+def browser_page(browser_context, repository_factory, theme=None):
     with browser_context(locale="ru-RU", timezone_id="Europe/Moscow") as context:
+        if theme is not None:
+            context.add_init_script(
+                "try { if (localStorage.getItem('ri.theme') === null) "
+                f"localStorage.setItem('ri.theme', '{theme}'); }} catch {{}}"
+            )
         page = context.new_page()
         page.set_default_timeout(5000)
         with TestClient(create_app(repository_factory=repository_factory)) as client:
@@ -51,9 +56,14 @@ def browser_page(browser_context, repository_factory):
             yield page
 
 
+@pytest.fixture(params=("classic", "cs", "wizard"))
+def theme(request):
+    return request.param
+
+
 @pytest.fixture
-def page(browser_context):
-    with browser_page(browser_context, MemoryRepository().factory) as page:
+def page(browser_context, theme):
+    with browser_page(browser_context, MemoryRepository().factory, theme) as page:
         yield page
 
 
@@ -75,13 +85,13 @@ def test_select_dataset_scope_and_evidence(page):
     assert not errors
 
 
-def test_batch_source_is_displayed_as_untrusted_text(browser_context):
+def test_batch_source_is_displayed_as_untrusted_text(browser_context, theme):
     repository = MemoryRepository()
     source = 'file:///raw/<img src=x onerror="window.injected=true">/batch.jsonl'
     repository.batches[0] = repository.batches[0].model_copy(
         update={"object_key": source}
     )
-    with browser_page(browser_context, repository.factory) as page:
+    with browser_page(browser_context, repository.factory, theme) as page:
         page.goto("http://application.test/?dataset=orders")
         expect(page.locator("#batches")).to_contain_text(source)
         assert page.locator("#batches img, #batches a").count() == 0
@@ -131,17 +141,21 @@ def test_error_retry_and_refresh(page):
     expect(page.locator("#refreshed-at")).to_contain_text("не свежесть исходных данных")
 
 
-def test_catalog_pagination(browser_context):
+def test_catalog_pagination(browser_context, theme):
     repository = MemoryRepository()
     repository.datasets = [
         Dataset(dataset_id=f"dataset-{i:02}", created_at=NOW) for i in range(51)
     ]
-    with browser_page(browser_context, repository.factory) as page:
+    with browser_page(browser_context, repository.factory, theme) as page:
         page.goto("http://application.test/")
         expect(page.locator(".catalog-item")).to_have_count(50)
         page.locator("#catalog").get_by_role("button", name="Далее").click()
         expect(page.locator(".catalog-item")).to_have_count(1)
         expect(page.locator(".catalog-item .incident-title")).to_have_text("dataset-50")
+        page.get_by_label("Оформление", exact=True).select_option("wizard" if theme != "wizard" else "cs")
+        expect(page.locator(".catalog-item")).to_have_count(1)
+        expect(page.locator(".catalog-item .incident-title")).to_have_text("dataset-50")
+        expect(page.locator("#catalog .pager")).to_contain_text("Страница 2")
         expect(
             page.locator("#catalog").get_by_role("button", name="Далее")
         ).to_be_disabled()
@@ -149,7 +163,7 @@ def test_catalog_pagination(browser_context):
         expect(page.locator(".catalog-item")).to_have_count(50)
 
 
-def test_batches_and_scopes_pagination(browser_context):
+def test_batches_and_scopes_pagination(browser_context, theme):
     repository = MemoryRepository()
     repository.batches = [
         repository.batches[0].model_copy(update={"batch_id": f"batch-{i:02}"})
@@ -162,7 +176,7 @@ def test_batches_and_scopes_pagination(browser_context):
         )
         for i in range(51)
     }
-    with browser_page(browser_context, repository.factory) as page:
+    with browser_page(browser_context, repository.factory, theme) as page:
         page.goto("http://application.test/?dataset=orders")
         for panel in ("batches", "scopes"):
             root = page.locator(f"#{panel}")
@@ -194,11 +208,11 @@ def test_late_response_does_not_replace_new_selection(page):
     expect(page.locator("#quality")).not_to_contain_text("STALE")
 
 
-def test_mobile_keyboard_and_untrusted_text(browser_context):
+def test_mobile_keyboard_and_untrusted_text(browser_context, theme):
     repository = MemoryRepository()
     malicious_id = '<img src=x onerror="window.injected=true">'
     repository.datasets.append(Dataset(dataset_id=malicious_id, created_at=NOW))
-    with browser_page(browser_context, repository.factory) as page:
+    with browser_page(browser_context, repository.factory, theme) as page:
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto("http://application.test/?dataset=orders&scope=window-1")
         expect(page.locator("#quality .status-block")).to_be_visible()
@@ -216,7 +230,7 @@ def test_mobile_keyboard_and_untrusted_text(browser_context):
         expect(page.locator("#dataset h2")).to_have_text("empty")
 
 
-def test_postgres_change_appears_after_refresh(browser_context):
+def test_postgres_change_appears_after_refresh(browser_context, theme):
     from tests.storage.support import TEST_DATABASE_URL, migrate
 
     if not TEST_DATABASE_URL:
@@ -240,7 +254,7 @@ def test_postgres_change_appears_after_refresh(browser_context):
             for result in evidence(dataset_id):
                 quality.save_check_result(result)
             with browser_page(
-                browser_context, lambda: open_repository(TEST_DATABASE_URL)
+                browser_context, lambda: open_repository(TEST_DATABASE_URL), theme
             ) as page:
                 page.goto(
                     f"http://application.test/?dataset={dataset_id}&scope=window-1"
@@ -274,3 +288,78 @@ def test_postgres_change_appears_after_refresh(browser_context):
                 connection.execute(
                     f"DELETE FROM {table} WHERE dataset_id = %s", (dataset_id,)
                 )
+
+
+def test_theme_switch_preserves_selection_without_data_requests(page):
+    page.goto("http://application.test/?dataset=orders&scope=window-1&keep=yes#details")
+    expect(page.locator("#quality .status-block")).to_be_visible()
+    expect(page.locator('[aria-busy="true"]')).to_have_count(0)
+    requests = []
+    page.on("request", lambda request: requests.append(request.url) if "/api/v1/" in request.url else None)
+    for theme in ("cs", "wizard", "classic"):
+        page.get_by_label("Оформление", exact=True).select_option(theme)
+        expect(page.locator("html")).to_have_attribute("data-theme", theme)
+        expect(page.locator("#quality .status-block")).to_be_visible()
+        assert f"theme={theme}" in page.url
+        assert "dataset=orders" in page.url and "scope=window-1" in page.url
+        assert "keep=yes" in page.url and page.url.endswith("#details")
+    assert requests == []
+    page.get_by_role("button", name="empty", exact=True).click()
+    assert "theme=classic" in page.url and "keep=yes" in page.url
+    assert "scope=" not in page.url
+    page.go_back()
+    expect(page.locator("#quality .status-block")).to_be_visible()
+    expect(page.locator("html")).to_have_attribute("data-theme", "classic")
+
+
+def test_theme_preferences_url_precedence_and_invalid_value(page):
+    page.goto("http://application.test/")
+    page.get_by_label("Оформление", exact=True).select_option("wizard")
+    page.goto("http://application.test/?dataset=orders")
+    expect(page.locator("html")).to_have_attribute("data-theme", "wizard")
+    page.goto("http://application.test/?theme=cs&dataset=orders")
+    expect(page.locator("html")).to_have_attribute("data-theme", "cs")
+    page.reload()
+    expect(page.locator("html")).to_have_attribute("data-theme", "cs")
+    page.goto("http://application.test/?theme=removed-theme")
+    expect(page.locator("html")).to_have_attribute("data-theme", "classic")
+    expect(page.get_by_label("Оформление", exact=True)).to_have_value("classic")
+
+
+def test_wizard_assistant_keyboard_and_persistence(page):
+    page.goto("http://application.test/?theme=wizard&dataset=orders&scope=window-1")
+    expect(page.locator("#quality .status-block")).to_be_visible()
+    toggle = page.get_by_role("button", name="Помощник", exact=True)
+    expect(page.locator("#wizard-assistant")).to_be_visible()
+    toggle.focus()
+    page.keyboard.press("Space")
+    expect(toggle).to_have_attribute("aria-pressed", "false")
+    expect(page.locator("#wizard-assistant")).to_be_hidden()
+    page.reload()
+    expect(page.locator("#wizard-assistant")).to_be_hidden()
+    page.get_by_label("Оформление", exact=True).select_option("classic")
+    expect(toggle).to_be_hidden()
+    page.get_by_label("Оформление", exact=True).select_option("wizard")
+    expect(page.locator("#wizard-assistant")).to_be_hidden()
+    toggle.click()
+    expect(page.locator("#wizard-assistant")).to_be_visible()
+    page.wait_for_function("document.querySelector('#wizard-assistant img').naturalWidth > 0")
+    expect(page.locator("#quality .status-block")).to_be_visible()
+
+
+def test_default_and_unavailable_local_storage(browser_context):
+    with browser_page(browser_context, MemoryRepository().factory) as page:
+        page.goto("http://application.test/")
+        expect(page.locator("html")).to_have_attribute("data-theme", "classic")
+        page.context.add_init_script(
+            "Object.defineProperty(window, 'localStorage', {get() {throw new Error('blocked');}});"
+        )
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto("http://application.test/?theme=cs&dataset=orders&scope=window-1")
+        expect(page.locator("#quality .status-block")).to_be_visible()
+        page.get_by_label("Оформление", exact=True).select_option("wizard")
+        expect(page.locator("html")).to_have_attribute("data-theme", "wizard")
+        page.reload()
+        expect(page.locator("html")).to_have_attribute("data-theme", "wizard")
+        assert not errors
