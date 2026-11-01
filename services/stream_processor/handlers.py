@@ -17,6 +17,7 @@ from contracts.events import (
 from contracts.metrics import MetricKind, MetricPoint
 from contracts.quality import (
     CheckStatus,
+    QualityStatus,
     SchemaField,
 )
 from contracts.state import Batch, PipelineRun, PipelineRunStatus
@@ -30,9 +31,14 @@ from storage.repositories import (
 from data_quality.config import load_suites, CheckSuite
 from data_quality.execution import prepare_check
 from .evaluation import EvaluationRunner
-from .publisher import EventPublisher, NoOpPublisher, build_quality_failed_event
+from .publisher import (
+    EventPublisher,
+    NoOpPublisher,
+    build_quality_failed_event,
+    build_quality_failed_from_reason,
+)
 from .raw import read_raw
-from .statistics import DatasetStatistics, compute_statistics
+from .statistics import DatasetStatistics, statistics_from_profile
 
 from .profiling import build_profile
 from data_quality.history import select_history, eligible
@@ -68,7 +74,11 @@ class StreamEventHandler:
         self._runner = EvaluationRunner(quality, clock=clock, sleep=sleep)
 
     def handle(self, event: Event) -> None:
-        """Dispatch a parsed event to its specific handler; ignore unhandled types."""
+        """Dispatch a parsed event to its specific handler; ignore unhandled types.
+
+        SchemaChangedEvent is intentionally not handled: the schema comes from raw
+        data batches (dataset.ingested) and is captured by _prepare via build_profile.
+        """
         if isinstance(event, DatasetIngestedEvent):
             self.handle_dataset_ingested(event)
         elif isinstance(event, PipelineEvent):
@@ -98,6 +108,7 @@ class StreamEventHandler:
                 evaluation.event.batch_id,
                 eligible(evaluation),
             )
+        published_check_ids: set[str] = set()
         for check in evaluation.checks:
             if check.result is not None and check.result.status is CheckStatus.FAIL:
                 self._publisher.publish(
@@ -107,6 +118,21 @@ class StreamEventHandler:
                         evaluation_id=evaluation.evaluation_id,
                     )
                 )
+                published_check_ids.add(check.result.check_id)
+        if evaluation.decision and evaluation.decision.status is QualityStatus.BLOCK:
+            for reason in evaluation.decision.reasons:
+                if reason.check_id not in published_check_ids:
+                    self._publisher.publish(
+                        build_quality_failed_from_reason(
+                            reason,
+                            evaluation.evaluated_at,
+                            evaluation_id=evaluation.evaluation_id,
+                            dataset_id=evaluation.event.dataset_id,
+                            scope_id=evaluation.event.batch_id,
+                        )
+                    )
+                    if reason.check_id:
+                        published_check_ids.add(reason.check_id)
 
     def _prepare(self, evaluation):
         event = evaluation.event
@@ -124,8 +150,8 @@ class StreamEventHandler:
         if event.raw_uri is None:
             raise ValueError("missing_raw_uri: quality evaluation requires raw data")
         records = read_raw(event.raw_uri)
-        stats = compute_statistics(records)
         profile = build_profile(event, records, evaluation.suite)
+        stats = statistics_from_profile(profile)
         expected_schema = self._previous_schema(event.dataset_id, event.schema_version)
         history = select_history(profile, self._metrics.list_profiles(event.dataset_id))
         checks = tuple(

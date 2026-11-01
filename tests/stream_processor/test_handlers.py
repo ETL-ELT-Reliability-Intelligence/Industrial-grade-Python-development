@@ -465,7 +465,10 @@ def test_event_without_raw_uri_saves_batch_only():
     assert metrics.list_metric_history("orders", MetricKind.ROW_COUNT) == []
     assert quality.list_check_results("orders", "b1") == []
     assert quality.get_quality_decision("orders", "b1").status is QualityStatus.BLOCK
-    assert publisher.events == []
+    assert len(publisher.events) >= 1
+    event_0 = publisher.events[0]
+    assert isinstance(event_0, DataQualityFailedEvent)
+    assert event_0.check_id.startswith("orders.")
 
 
 def test_pipeline_events_update_pipeline_runs_and_keep_terminal_state():
@@ -513,7 +516,7 @@ def test_pipeline_events_update_pipeline_runs_and_keep_terminal_state():
     assert run2.error == "boom"
 
 
-def test_unhandled_event_is_ignored():
+def test_schema_changed_is_documented_as_unhandled():
     handler, datasets, pipelines, _, _, _ = make_handler()
     handler.handle(
         SchemaChangedEvent(
@@ -526,3 +529,79 @@ def test_unhandled_event_is_ignored():
     )
     assert datasets.datasets == set()
     assert pipelines.runs == {}
+
+
+def test_block_from_missing_raw_uri_publishes_quality_failed_event(tmp_path):
+    handler, _, _, _, quality, publisher = make_handler()
+    event = DatasetIngestedEvent(
+        dataset_id="orders",
+        batch_id="b1",
+        records=10,
+        received_at=NOW,
+        schema_version=1,
+        raw_uri=None,
+    )
+
+    handler.handle(event)
+
+    decision = quality.get_quality_decision("orders", "b1")
+    assert decision.status is QualityStatus.BLOCK
+    assert len(publisher.events) >= 1
+    event_0 = publisher.events[0]
+    assert isinstance(event_0, DataQualityFailedEvent)
+    assert event_0.check_id.startswith("orders.")
+
+
+def test_fail_and_additional_reason_no_duplicate(tmp_path):
+    handler, _, _, _, _, publisher = make_handler()
+    rows_10 = [{"id": i, "amount": float(i)} for i in range(10)]
+    for idx in range(1, 4):
+        uri = write_batch(tmp_path, f"b{idx}", rows_10)
+        handler.handle(
+            DatasetIngestedEvent(
+                dataset_id="orders",
+                batch_id=f"b{idx}",
+                records=10,
+                received_at=NOW + idx * MINUTE,
+                schema_version=1,
+                raw_uri=uri,
+            )
+        )
+
+    uri_drop = write_batch(tmp_path, "b4", rows_10[:4])
+    handler.handle(
+        DatasetIngestedEvent(
+            dataset_id="orders",
+            batch_id="b4",
+            records=4,
+            received_at=NOW + 4 * MINUTE,
+            schema_version=1,
+            raw_uri=uri_drop,
+        )
+    )
+
+    check_ids_published = [e.check_id for e in publisher.events]
+    assert len(check_ids_published) == len(set(check_ids_published))
+    assert len(publisher.events) == 1
+    assert publisher.events[0].check_id == "orders.row_count"
+
+
+def test_redelivered_decision_publishes_event_only_once(tmp_path):
+    handler, _, _, _, _, publisher = make_handler()
+    event = DatasetIngestedEvent(
+        dataset_id="orders",
+        batch_id="b1",
+        records=10,
+        received_at=NOW,
+        schema_version=1,
+        raw_uri=None,
+    )
+
+    handler.handle(event)
+    first_count = len(publisher.events)
+    assert first_count > 0
+
+    handler.handle(event)
+    second_count = len(publisher.events)
+
+    assert second_count == first_count
