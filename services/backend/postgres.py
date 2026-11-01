@@ -13,7 +13,15 @@ from contracts.state import Batch
 from storage.postgres import connect
 from storage.serialization import check_result_from_row, reasons_from_json
 
-from .models import Dataset, QualityScope, ScopeQuality, StoredCheck
+from .evaluations import PostgresEvaluationReader
+from .models import (
+    Dataset,
+    EvaluationDetail,
+    EvaluationSummary,
+    QualityScope,
+    ScopeQuality,
+    StoredCheck,
+)
 from .repository import StorageUnavailable
 
 logger = logging.getLogger(__name__)
@@ -22,6 +30,17 @@ logger = logging.getLogger(__name__)
 class PostgresReadRepository:
     def __init__(self, connection: psycopg.Connection[dict[str, Any]]) -> None:
         self.connection = connection
+        self.evaluations = PostgresEvaluationReader(connection)
+
+    def list_evaluations(
+        self, dataset_id: str, scope_id: str, limit: int, offset: int
+    ) -> list[EvaluationSummary]:
+        return self.evaluations.list_evaluations(dataset_id, scope_id, limit, offset)
+
+    def get_evaluation(
+        self, dataset_id: str, evaluation_id: str
+    ) -> EvaluationDetail | None:
+        return self.evaluations.get_evaluation(dataset_id, evaluation_id)
 
     def ready(self) -> None:
         # Verify columns and read permissions as well as connectivity. No data scan.
@@ -31,6 +50,9 @@ class PostgresReadRepository:
             "SELECT check_id, dataset_id, scope_id, column_name, kind, status, reason_code, "
             "message, observation, constraint_spec, details, recorded_at FROM quality_check_results LIMIT 0",
             "SELECT dataset_id, scope_id, status, reasons, decided_at FROM quality_decisions LIMIT 0",
+            "SELECT evaluation_id, dataset_id, scope_id, sequence, created_at, updated_at, snapshot "
+            "FROM quality_evaluations LIMIT 0",
+            "SELECT evaluation_id, check_id, snapshot FROM quality_executions LIMIT 0",
         ):
             self.connection.execute(query)
 
@@ -62,10 +84,12 @@ class PostgresReadRepository:
         rows = self.connection.execute(
             "SELECT scope_id, max(saved_at) AS last_saved_at FROM ("
             "SELECT scope_id, recorded_at AS saved_at FROM quality_check_results WHERE dataset_id = %s "
-            "UNION ALL SELECT scope_id, decided_at FROM quality_decisions WHERE dataset_id = %s"
+            "UNION ALL SELECT scope_id, decided_at FROM quality_decisions WHERE dataset_id = %s "
+            "UNION ALL SELECT scope_id, GREATEST(created_at, updated_at) FROM quality_evaluations "
+            "WHERE dataset_id = %s"
             ") AS observations GROUP BY scope_id ORDER BY last_saved_at DESC, scope_id "
             "LIMIT %s OFFSET %s",
-            (dataset_id, dataset_id, limit, offset),
+            (dataset_id, dataset_id, dataset_id, limit, offset),
         ).fetchall()
         return [QualityScope(**row) for row in rows]
 

@@ -7,8 +7,15 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from contracts.state import Batch
 
-from .models import Dataset, Page, QualityScope, ScopeQuality
-from .queries import DatasetQueries
+from .models import (
+    Dataset,
+    EvaluationDetail,
+    EvaluationSummary,
+    Page,
+    QualityScope,
+    ScopeQuality,
+)
+from .queries import DatasetQueries, EvaluationQueries
 from .repository import ReadRepository
 
 router = APIRouter(prefix="/api/v1", tags=["datasets"])
@@ -29,6 +36,7 @@ def get_queries(repository: Repository) -> DatasetQueries:
 Queries = Annotated[DatasetQueries, Depends(get_queries)]
 Limit = Annotated[int, Query(ge=1, le=200)]
 Offset = Annotated[int, Query(ge=0)]
+ScopeId = Annotated[str, Query(min_length=1, pattern=r"\S")]
 
 
 @router.get("/datasets", response_model=Page[Dataset])
@@ -59,6 +67,38 @@ def scopes(
 def quality(
     dataset_id: str,
     queries: Queries,
-    scope_id: Annotated[str, Query(min_length=1, pattern=r"\S")],
+    scope_id: ScopeId,
 ) -> ScopeQuality:
     return queries.quality(dataset_id, scope_id)
+
+
+def get_evaluation_queries(
+    repository: Repository, datasets: Queries
+) -> EvaluationQueries:
+    return EvaluationQueries(repository, datasets)
+
+
+Evaluations = Annotated[EvaluationQueries, Depends(get_evaluation_queries)]
+
+
+@router.get(
+    "/datasets/{dataset_id}/evaluations", response_model=Page[EvaluationSummary]
+)
+def evaluations(
+    dataset_id: str,
+    scope_id: ScopeId,
+    queries: Evaluations,
+    limit: Limit = 50,
+    offset: Offset = 0,
+) -> Page[EvaluationSummary]:
+    return queries.history(dataset_id, scope_id, limit, offset)
+
+
+@router.get(
+    "/datasets/{dataset_id}/evaluations/{evaluation_id}",
+    response_model=EvaluationDetail,
+)
+def evaluation(
+    dataset_id: str, evaluation_id: str, queries: Evaluations
+) -> EvaluationDetail:
+    return queries.detail(dataset_id, evaluation_id)

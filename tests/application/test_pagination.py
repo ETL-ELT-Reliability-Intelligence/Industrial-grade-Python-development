@@ -37,7 +37,7 @@ def test_queries_request_one_extra_row(query_name, method_name, args, count):
     [
         ("list_datasets", (), (3, 7)),
         ("list_batches", ("orders",), ("orders", 3, 7)),
-        ("list_quality_scopes", ("orders",), ("orders", "orders", 3, 7)),
+        ("list_quality_scopes", ("orders",), ("orders", "orders", "orders", 3, 7)),
     ],
 )
 def test_sql_applies_bound_limit_and_offset(method_name, args, parameters):

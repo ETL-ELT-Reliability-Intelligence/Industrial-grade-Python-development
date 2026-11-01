@@ -14,7 +14,14 @@ from contracts.state import Batch
 from data_quality.checks.null_rate import check_null_rate
 from data_quality.checks.row_count import check_row_count
 from data_quality.policies import evaluate_quality
-from services.backend.models import Dataset, QualityScope, ScopeQuality, StoredCheck
+from services.backend.models import (
+    Dataset,
+    EvaluationDetail,
+    EvaluationSummary,
+    QualityScope,
+    ScopeQuality,
+    StoredCheck,
+)
 
 NOW = datetime(2026, 10, 12, 10, tzinfo=timezone.utc)
 
@@ -63,6 +70,8 @@ class MemoryRepository:
                 decided_at=NOW,
             )
         }
+        # Newest first, matching the SQL sequence order rather than timestamps.
+        self.evaluations: list[EvaluationDetail] = []
 
     @contextmanager
     def factory(self):
@@ -85,12 +94,58 @@ class MemoryRepository:
         ]
 
     def list_quality_scopes(self, dataset_id, limit, offset):
-        items = [
-            QualityScope(scope_id=scope, last_saved_at=NOW)
-            for dataset, scope in self.qualities
-            if dataset == dataset_id
-        ]
+        times = {
+            scope: NOW for dataset, scope in self.qualities if dataset == dataset_id
+        }
+        for record in self.evaluations:
+            if record.dataset_id == dataset_id:
+                times[record.scope_id] = max(
+                    times.get(record.scope_id, record.updated_at),
+                    record.created_at,
+                    record.updated_at,
+                )
+        items = sorted(
+            [
+                QualityScope(scope_id=scope, last_saved_at=saved)
+                for scope, saved in times.items()
+            ],
+            key=lambda item: (-item.last_saved_at.timestamp(), item.scope_id),
+        )
         return items[offset : offset + limit]
+
+    def list_evaluations(self, dataset_id, scope_id, limit, offset):
+        records = [
+            item
+            for item in self.evaluations
+            if item.dataset_id == dataset_id and item.scope_id == scope_id
+        ]
+        return [
+            EvaluationSummary(
+                dataset_id=item.dataset_id,
+                scope_id=item.scope_id,
+                created_at=item.created_at,
+                updated_at=item.updated_at,
+                evaluation_id=item.evaluation.evaluation_id,
+                state=item.evaluation.state,
+                evaluated_at=item.evaluation.evaluated_at,
+                config_hash=item.evaluation.config_hash,
+                decision_status=item.evaluation.decision.status
+                if item.evaluation.decision
+                else None,
+            )
+            for item in records[offset : offset + limit]
+        ]
+
+    def get_evaluation(self, dataset_id, evaluation_id):
+        return next(
+            (
+                item
+                for item in self.evaluations
+                if item.dataset_id == dataset_id
+                and item.evaluation.evaluation_id == evaluation_id
+            ),
+            None,
+        )
 
     def get_quality(self, dataset_id, scope_id):
         return self.qualities.get(

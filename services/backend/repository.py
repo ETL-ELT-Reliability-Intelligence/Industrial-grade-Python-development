@@ -4,7 +4,13 @@ from typing import Protocol
 
 from contracts.state import Batch
 
-from .models import Dataset, QualityScope, ScopeQuality
+from .models import (
+    Dataset,
+    EvaluationDetail,
+    EvaluationSummary,
+    QualityScope,
+    ScopeQuality,
+)
 
 
 class StorageUnavailable(Exception):
@@ -15,9 +21,21 @@ class DatasetNotFound(Exception):
     """The requested dataset is absent from the catalog."""
 
 
-class ReadRepository(Protocol):
-    def ready(self) -> None: ...
+class EvaluationNotFound(Exception):
+    """The requested evaluation does not belong to the dataset."""
 
+
+class EvaluationRepository(Protocol):
+    def list_evaluations(
+        self, dataset_id: str, scope_id: str, limit: int, offset: int
+    ) -> list[EvaluationSummary]: ...
+
+    def get_evaluation(
+        self, dataset_id: str, evaluation_id: str
+    ) -> EvaluationDetail | None: ...
+
+
+class DatasetReadRepository(Protocol):
     def list_datasets(self, limit: int, offset: int) -> list[Dataset]: ...
 
     def get_dataset(self, dataset_id: str) -> Dataset | None: ...
@@ -29,3 +47,7 @@ class ReadRepository(Protocol):
     ) -> list[QualityScope]: ...
 
     def get_quality(self, dataset_id: str, scope_id: str) -> ScopeQuality: ...
+
+
+class ReadRepository(DatasetReadRepository, EvaluationRepository, Protocol):
+    def ready(self) -> None: ...
