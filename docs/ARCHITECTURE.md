@@ -356,6 +356,8 @@ Batch Layer отвечает за историческую обработку.
 - dbt;
 - при необходимости Spark.
 
+На текущем этапе исторические baselines и dataset statistics считаются в Speed Layer как осознанное MVP-отклонение. Перенос их пересчёта в batch — будущий инкремент.
+
 ### Задачи
 
 - полная обработка исторических данных;
@@ -1066,7 +1068,11 @@ Investigation
 - Speed Layer;
 - PostgreSQL;
 - Object Storage;
-- dataset statistics.
+- dataset statistics;
+- MVP онлайн-детекции аномалий (rule-based) в Speed Layer.
+
+MVP онлайн-детекции аномалий (rule-based) реализуется в Speed Layer (роль №2) как осознанное архитектурное решение.
+ML-модели, data drift и feature engineering остаются ответственностью роли №3.
 
 ## Participant 3 — Reliability Intelligence
 
