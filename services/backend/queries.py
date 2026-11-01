@@ -4,8 +4,20 @@ from typing import TypeVar
 
 from contracts.state import Batch
 
-from .models import Dataset, Page, QualityScope, ScopeQuality
-from .repository import DatasetNotFound, ReadRepository
+from .models import (
+    Dataset,
+    EvaluationDetail,
+    EvaluationSummary,
+    Page,
+    QualityScope,
+    ScopeQuality,
+)
+from .repository import (
+    DatasetNotFound,
+    DatasetReadRepository,
+    EvaluationNotFound,
+    EvaluationRepository,
+)
 
 T = TypeVar("T")
 
@@ -17,7 +29,7 @@ def page(items: list[T], limit: int, offset: int) -> Page[T]:
 
 
 class DatasetQueries:
-    def __init__(self, repository: ReadRepository) -> None:
+    def __init__(self, repository: DatasetReadRepository) -> None:
         self.repository = repository
 
     def datasets(self, limit: int, offset: int) -> Page[Dataset]:
@@ -46,3 +58,28 @@ class DatasetQueries:
     def quality(self, dataset_id: str, scope_id: str) -> ScopeQuality:
         self.dataset(dataset_id)
         return self.repository.get_quality(dataset_id, scope_id)
+
+
+class EvaluationQueries:
+    def __init__(
+        self, repository: EvaluationRepository, datasets: DatasetQueries
+    ) -> None:
+        self.repository = repository
+        self.datasets = datasets
+
+    def history(
+        self, dataset_id: str, scope_id: str, limit: int, offset: int
+    ) -> Page[EvaluationSummary]:
+        self.datasets.dataset(dataset_id)
+        return page(
+            self.repository.list_evaluations(dataset_id, scope_id, limit + 1, offset),
+            limit,
+            offset,
+        )
+
+    def detail(self, dataset_id: str, evaluation_id: str) -> EvaluationDetail:
+        self.datasets.dataset(dataset_id)
+        evaluation = self.repository.get_evaluation(dataset_id, evaluation_id)
+        if evaluation is None:
+            raise EvaluationNotFound
+        return evaluation

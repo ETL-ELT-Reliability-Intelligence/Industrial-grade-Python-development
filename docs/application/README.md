@@ -32,8 +32,7 @@ uv run --no-sync python -m uvicorn services.backend.main:app --host 127.0.0.1 --
 
 Адрес приложения: <http://127.0.0.1:8000/>. API: <http://127.0.0.1:8000/docs>.
 Оформление переключается между Windows XP / Classic, CS 1.6 и Design Wizard.
-Поведение экрана и API едины для всех тем. Подробности и отдельный просмотр
-на тестовых данных без PostgreSQL — в [описании тем](themes.md).
+Поведение экрана и API едины для всех тем. Подробности — в [описании тем](themes.md).
 
 - `/health` — процесс жив; подключение к БД не требуется.
 - `/ready` — соединение и чтение необходимых таблиц/колонок доступны.
@@ -79,7 +78,7 @@ uv run --no-sync python -m uvicorn services.demo.backend.main:app --host 127.0.0
 
 ```powershell
 $env:TEST_DATABASE_URL = 'postgresql://reliability:reliability@127.0.0.1:5432/reliability_test'
-uv run --no-sync python -m pytest tests/application/test_api.py tests/application/test_postgres.py tests/application/demo -q
+uv run --no-sync python -m pytest tests/application -q
 uv run --no-sync python -m pytest -q
 ```
 
@@ -91,3 +90,9 @@ Linux/macOS: `uv run --no-sync python -m playwright install chromium`.
 `PLAYWRIGHT_EXECUTABLE_PATH` позволяет указать другой Chromium-браузер.
 Без Playwright браузерные тесты пропускаются; без `TEST_DATABASE_URL`
 пропускаются интеграционные тесты. Такие пропуски не подтверждают интеграцию.
+
+История расчётов доступна в API `/datasets/{dataset_id}/evaluations?scope_id=...`
+под `/api/v1` и на основном экране. Для подробностей требуется схема с таблицами
+quality_evaluations и quality_executions; применяются общие миграции до 0003.
+0003 удаляет старые результаты качества. Рабочую БД автоматически не обновлять;
+интеграционные тесты запускать только с отдельной TEST_DATABASE_URL.

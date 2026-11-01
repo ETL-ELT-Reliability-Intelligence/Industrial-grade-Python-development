@@ -4,7 +4,8 @@ from typing import Generic, TypeVar
 
 from pydantic import AwareDatetime, BaseModel
 
-from contracts.quality import CheckResult, QualityDecision
+from contracts.evaluation import Evaluation, ExecutionStatus
+from contracts.quality import CheckResult, QualityDecision, QualityStatus
 
 T = TypeVar("T")
 
@@ -37,3 +38,22 @@ class ScopeQuality(BaseModel):
     checks: list[StoredCheck]
     decision: QualityDecision | None
     decided_at: AwareDatetime | None
+
+
+class EvaluationRecord(BaseModel):
+    dataset_id: str
+    scope_id: str
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
+class EvaluationSummary(EvaluationRecord):
+    evaluation_id: str
+    state: ExecutionStatus
+    evaluated_at: AwareDatetime
+    config_hash: str
+    decision_status: QualityStatus | None
+
+
+class EvaluationDetail(EvaluationRecord):
+    evaluation: Evaluation

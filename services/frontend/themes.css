@@ -66,6 +66,9 @@ html[data-theme="cs"] {
 [data-theme="cs"] .status-pass { color: #b9d595; }
 [data-theme="cs"] .status-fail, [data-theme="cs"] .status-block, [data-theme="cs"] .error { color: #f4baa4; }
 [data-theme="cs"] .status-unknown, [data-theme="cs"] .status-warn { color: #e0cea1; }
+[data-theme="cs"] .status-pending, [data-theme="cs"] .status-running, [data-theme="cs"] .status-skipped { color: #e0cea1; }
+[data-theme="cs"] .status-completed { color: #b9d595; }
+[data-theme="cs"] .status-error { color: #f4baa4; }
 [data-theme="cs"] footer { border-color: var(--line); }
 
 /* Wizard: classic gray Windows utility; the assistant never covers data. */

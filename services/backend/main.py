@@ -11,7 +11,12 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import Repository, router
 from .postgres import open_repository
-from .repository import DatasetNotFound, ReadRepository, StorageUnavailable
+from .repository import (
+    DatasetNotFound,
+    EvaluationNotFound,
+    ReadRepository,
+    StorageUnavailable,
+)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 RepositoryFactory = Callable[[], AbstractContextManager[ReadRepository]]
@@ -36,6 +41,12 @@ def create_app(*, repository_factory: RepositoryFactory | None = None) -> FastAP
     @app.exception_handler(DatasetNotFound)
     async def not_found(request: Request, exc: DatasetNotFound) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": "Dataset not found"})
+
+    @app.exception_handler(EvaluationNotFound)
+    async def evaluation_not_found(
+        request: Request, exc: EvaluationNotFound
+    ) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": "Evaluation not found"})
 
     @app.get("/health", tags=["system"])
     def health() -> dict[str, str]:

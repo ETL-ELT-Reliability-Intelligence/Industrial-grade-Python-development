@@ -219,3 +219,6 @@ __marimo__/
 
 # local raw data from ingestion
 data/
+
+# Browser traces and screenshots from application tests
+/test-results/

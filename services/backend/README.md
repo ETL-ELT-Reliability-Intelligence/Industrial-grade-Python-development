@@ -86,3 +86,18 @@ uv run --no-sync python -m pytest tests/application -q
 `test_ingested_sample_quality_is_read_through_api` связывает реальную загрузку,
 сохранение качества и read-маршрут API. `test_pagination.py` проверяет `limit + 1`
 и SQL `LIMIT/OFFSET`. Существующий тест согласованного снимка транзакции сохранён.
+
+## Выполнение и история качества
+
+- `GET /api/v1/datasets/{dataset_id}/evaluations?scope_id=...&limit=50&offset=0`
+  — краткая история по сохранённой последовательности, новые расчёты первыми.
+- `GET /api/v1/datasets/{dataset_id}/evaluations/{evaluation_id}`
+  — план, актуальные исполнения, попытки, эталон и сохранённое решение.
+
+API читает существующие Evaluation; выполнение проверок и переоценка остаются
+в stream_processor. Требуются миграции до 0003. Backend их сам не применяет;
+0003 удаляет прежние результаты качества. Для тестов используйте выделенную БД.
+
+`test_evaluations.py` проверяет HTTP-контракт и ограниченный SQL списка.
+В `test_postgres.py` дополнительно проверяются реальный storage, порядок истории,
+незавершённые расчёты и отдельно сохранённые исполнения.

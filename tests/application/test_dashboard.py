@@ -13,6 +13,7 @@ from services.backend.main import create_app
 from services.backend.models import Dataset
 from services.backend.postgres import open_repository
 from tests.application.support import NOW, MemoryRepository
+from tests.application.evaluation_support import evaluation_record
 
 playwright_api = pytest.importorskip("playwright.sync_api")
 expect = playwright_api.expect
@@ -152,7 +153,9 @@ def test_catalog_pagination(browser_context, theme):
         page.locator("#catalog").get_by_role("button", name="Далее").click()
         expect(page.locator(".catalog-item")).to_have_count(1)
         expect(page.locator(".catalog-item .incident-title")).to_have_text("dataset-50")
-        page.get_by_label("Оформление", exact=True).select_option("wizard" if theme != "wizard" else "cs")
+        page.get_by_label("Оформление", exact=True).select_option(
+            "wizard" if theme != "wizard" else "cs"
+        )
         expect(page.locator(".catalog-item")).to_have_count(1)
         expect(page.locator(".catalog-item .incident-title")).to_have_text("dataset-50")
         expect(page.locator("#catalog .pager")).to_contain_text("Страница 2")
@@ -295,7 +298,12 @@ def test_theme_switch_preserves_selection_without_data_requests(page):
     expect(page.locator("#quality .status-block")).to_be_visible()
     expect(page.locator('[aria-busy="true"]')).to_have_count(0)
     requests = []
-    page.on("request", lambda request: requests.append(request.url) if "/api/v1/" in request.url else None)
+    page.on(
+        "request",
+        lambda request: (
+            requests.append(request.url) if "/api/v1/" in request.url else None
+        ),
+    )
     for theme in ("cs", "wizard", "classic"):
         page.get_by_label("Оформление", exact=True).select_option(theme)
         expect(page.locator("html")).to_have_attribute("data-theme", theme)
@@ -343,7 +351,9 @@ def test_wizard_assistant_keyboard_and_persistence(page):
     expect(page.locator("#wizard-assistant")).to_be_hidden()
     toggle.click()
     expect(page.locator("#wizard-assistant")).to_be_visible()
-    page.wait_for_function("document.querySelector('#wizard-assistant img').naturalWidth > 0")
+    page.wait_for_function(
+        "document.querySelector('#wizard-assistant img').naturalWidth > 0"
+    )
     expect(page.locator("#quality .status-block")).to_be_visible()
 
 
@@ -363,3 +373,259 @@ def test_default_and_unavailable_local_storage(browser_context):
         page.reload()
         expect(page.locator("html")).to_have_attribute("data-theme", "wizard")
         assert not errors
+
+
+def history_repository():
+    repository = MemoryRepository()
+    repository.evaluations = [
+        evaluation_record("new"),
+        evaluation_record("old", completed=True),
+    ]
+    return repository
+
+
+def test_evaluation_selection_url_history_refresh_and_theme(browser_context, theme):
+    repository = history_repository()
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.goto(
+            "http://application.test/?dataset=orders&scope=window-1&keep=yes#details"
+        )
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: new")
+        assert "evaluation=new" in page.url
+        expect(page.locator("#quality .status-pending")).to_have_count(2)
+        expect(page.locator("#quality .decision")).to_contain_text(
+            "Решение ещё не сохранено"
+        )
+        choice = page.locator("#evaluations").get_by_role(
+            "button", name="old", exact=True
+        )
+        choice.focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#quality .decision .status-block")).to_have_text("BLOCK")
+        expect(page.locator("#quality .status-completed")).to_have_count(2)
+        assert (
+            "evaluation=old" in page.url
+            and "keep=yes" in page.url
+            and page.url.endswith("#details")
+        )
+        page.go_back()
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: new")
+        page.go_forward()
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: old")
+        page.get_by_role("button", name="Обновить данные").click()
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: old")
+        expect(page.locator('[aria-busy="true"]')).to_have_count(0)
+        requests = []
+        page.on(
+            "request",
+            lambda request: (
+                requests.append(request.url) if "/api/v1/" in request.url else None
+            ),
+        )
+        page.get_by_label("Оформление", exact=True).select_option(
+            "cs" if theme != "cs" else "wizard"
+        )
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: old")
+        assert requests == []
+        page.reload()
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: old")
+        page.get_by_role("button", name="empty", exact=True).click()
+        assert "evaluation=" not in page.url
+        expect(page.locator("#quality")).to_contain_text("Выберите область")
+
+
+@pytest.mark.parametrize("evaluation_id", ["missing", "", "wrong-scope"])
+def test_evaluation_invalid_link_never_falls_back(browser_context, evaluation_id):
+    repository = history_repository()
+    repository.evaluations.append(
+        evaluation_record("wrong-scope", scope_id="another-scope")
+    )
+    with browser_page(browser_context, repository.factory) as page:
+        requests = []
+        page.on("request", lambda request: requests.append(request.url))
+        page.goto(
+            f"http://application.test/?dataset=orders&scope=window-1&evaluation={evaluation_id}"
+        )
+        expect(page.locator("#quality [role=alert]")).to_be_visible()
+        expect(page.locator("#quality .decision")).to_have_count(0)
+        assert not any("/quality?" in url for url in requests)
+
+
+def test_evaluation_history_failure_retry_and_legacy(browser_context, theme):
+    repository = history_repository()
+    with browser_page(browser_context, repository.factory, theme) as page:
+        pattern = "**/api/v1/datasets/orders/evaluations?*"
+        page.route(
+            pattern,
+            lambda route: route.fulfill(status=503, json={"detail": "Unavailable"}),
+        )
+        requests = []
+        page.on("request", lambda request: requests.append(request.url))
+        page.goto("http://application.test/?dataset=orders&scope=window-1")
+        expect(page.locator("#evaluations [role=alert]")).to_contain_text(
+            "Хранилище недоступно"
+        )
+        expect(page.locator("#quality .decision")).to_have_count(0)
+        assert not any("/quality?" in url for url in requests)
+        page.unroute(pattern)
+        page.locator("#evaluations").get_by_role("button", name="Повторить").click()
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: new")
+        page.goto("http://application.test/?dataset=orders&scope=absent")
+        expect(page.locator("#quality")).to_contain_text("Истории расчётов нет")
+
+
+def test_evaluation_pagination_preserves_selected_detail(browser_context, theme):
+    repository = history_repository()
+    repository.evaluations = [
+        evaluation_record(f"evaluation-{i:02}") for i in range(51)
+    ]
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.goto("http://application.test/?dataset=orders&scope=window-1")
+        expect(page.locator("#evaluations tbody tr")).to_have_count(50)
+        page.locator("#evaluations").get_by_role("button", name="Далее").click()
+        expect(page.locator("#evaluations tbody tr")).to_have_count(1)
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: evaluation-00")
+        expect(
+            page.locator("#evaluations").get_by_role("button", name="Далее")
+        ).to_be_disabled()
+        page.locator("#evaluations").get_by_role("button", name="evaluation-50").click()
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: evaluation-50")
+        page.locator("#evaluations").get_by_role("button", name="Назад").click()
+        expect(page.locator("#evaluations tbody tr")).to_have_count(50)
+        expect(page.locator("#quality h3").first).to_have_text("Расчёт: evaluation-50")
+
+
+def test_evaluation_late_detail_does_not_replace_dataset(browser_context, theme):
+    repository = history_repository()
+    with browser_page(browser_context, repository.factory, theme) as page:
+        held = []
+        page.route(
+            "**/datasets/orders/evaluations/new", lambda route: held.append(route)
+        )
+        with page.expect_request("**/evaluations/new"):
+            page.goto("http://application.test/?dataset=orders&scope=window-1")
+        expect(page.locator("#evaluations tbody tr")).to_have_count(2)
+        page.get_by_role("button", name="empty", exact=True).click()
+        expect(page.locator("#dataset h2")).to_have_text("empty")
+        assert held
+        held[0].fulfill(
+            status=200, json=repository.evaluations[0].model_dump(mode="json")
+        )
+        expect(page.locator("#quality")).to_contain_text("Выберите область")
+        expect(page.locator("#quality")).not_to_contain_text("Расчёт: new")
+
+
+def test_evaluation_diagnostics_mobile_and_untrusted_text(browser_context, theme):
+    from contracts.evaluation import Attempt, ExecutionStatus
+    from contracts.quality_config import CheckSpec
+    from contracts.quality import CheckKind
+
+    repository = history_repository()
+    record = repository.evaluations[0]
+    injection = '<img src=x onerror="window.injected=true">'
+    skipped_spec = CheckSpec(key="nulls", kind=CheckKind.NULL_RATE, column="email")
+    from contracts.evaluation import CheckExecution
+
+    skipped = CheckExecution(
+        check_id="orders.nulls",
+        spec=skipped_spec,
+        state=ExecutionStatus.SKIPPED,
+        code="insufficient_history",
+        message="Недостаточно истории",
+    )
+    failed = record.evaluation.checks[0].model_copy(
+        update={
+            "state": ExecutionStatus.ERROR,
+            "code": "source_timeout",
+            "message": injection,
+            "attempts": (
+                Attempt(
+                    number=1,
+                    started_at=NOW,
+                    finished_at=NOW,
+                    code="source_timeout",
+                    message=injection,
+                ),
+            ),
+        }
+    )
+    suite = record.evaluation.suite.model_copy(
+        update={"checks": (failed.spec, skipped_spec)}
+    )
+    evaluation = record.evaluation.model_copy(
+        update={
+            "checks": (failed, skipped),
+            "suite": suite,
+            "config_hash": suite.fingerprint,
+        }
+    )
+    repository.evaluations[0] = record.model_copy(update={"evaluation": evaluation})
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto("http://application.test/?dataset=orders&scope=window-1")
+        expect(page.locator("#quality .status-error")).to_contain_text("ERROR")
+        expect(page.locator("#quality .status-skipped")).to_contain_text("SKIPPED")
+        expect(page.locator("#quality")).to_contain_text("Результата нет")
+        expect(page.locator("#quality")).to_contain_text("Недостаточно истории")
+        expect(page.locator("#quality")).to_contain_text(injection)
+        assert page.locator("#quality img").count() == 0
+        assert page.evaluate("window.injected") is None
+        assert page.locator("#evaluations > .table-wrap").evaluate(
+            "element => element.scrollWidth > element.clientWidth"
+        )
+        summary = (
+            page.locator("#quality summary").filter(has_text="Эталон сравнения").first
+        )
+        summary.focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#quality")).to_contain_text("historical-batch")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_postgres_evaluation_execution_appears_after_refresh(browser_context, theme):
+    from tests.storage.support import TEST_DATABASE_URL, migrate
+
+    if not TEST_DATABASE_URL:
+        pytest.skip("Set TEST_DATABASE_URL to an expendable test database")
+    from uuid import uuid4
+    from contracts.evaluation import ExecutionStatus
+    from storage.postgres import connect, PostgresQualityRepository
+
+    migrate(TEST_DATABASE_URL)
+    dataset_id = f"evaluation-browser-{uuid4().hex}"
+    record = evaluation_record(dataset_id=dataset_id)
+    with connect(TEST_DATABASE_URL) as connection:
+        quality = PostgresQualityRepository(connection)
+        quality.save_evaluation(record.evaluation)
+        try:
+            with browser_page(
+                browser_context, lambda: open_repository(TEST_DATABASE_URL), theme
+            ) as page:
+                page.goto(
+                    f"http://application.test/?dataset={dataset_id}&scope=window-1"
+                )
+                expect(page.locator("#quality h3").first).to_have_text(
+                    "Расчёт: evaluation-1"
+                )
+                expect(page.locator("#quality .status-pending")).to_have_count(2)
+                execution = record.evaluation.checks[0].model_copy(
+                    update={
+                        "state": ExecutionStatus.ERROR,
+                        "code": "read_error",
+                        "message": "Изменение через storage",
+                    }
+                )
+                quality.save_execution("evaluation-1", execution)
+                page.get_by_role("button", name="Обновить данные").click()
+                expect(page.locator("#quality .status-error")).to_contain_text("ERROR")
+                expect(page.locator("#quality")).to_contain_text(
+                    "Изменение через storage"
+                )
+                assert "evaluation=evaluation-1" in page.url
+        finally:
+            connection.execute(
+                "DELETE FROM quality_evaluations WHERE dataset_id = %s", (dataset_id,)
+            )
+            connection.execute(
+                "DELETE FROM datasets WHERE dataset_id = %s", (dataset_id,)
+            )
