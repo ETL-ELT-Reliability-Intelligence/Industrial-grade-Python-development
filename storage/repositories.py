@@ -14,6 +14,7 @@ from contracts.profiles import BatchProfile
 from contracts.metrics import MetricKind, MetricPoint
 from contracts.quality import CheckResult, QualityDecision, SchemaField
 from contracts.state import Anomaly, Batch, PipelineRun, UserAction
+from storage.feature_profiles import FeatureRepository
 
 
 class DatasetRepository(Protocol):
@@ -67,7 +68,7 @@ class PipelineRunRepository(Protocol):
         ...
 
 
-class MetricRepository(Protocol):
+class MetricRepository(FeatureRepository, Protocol):
     """Dataset statistics, the input of baselines and anomaly detection."""
 
     def save_profile(self, profile: BatchProfile) -> None: ...

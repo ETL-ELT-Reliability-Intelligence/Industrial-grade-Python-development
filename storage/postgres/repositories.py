@@ -7,6 +7,7 @@ from typing import Any
 
 from psycopg import Connection
 from psycopg.types.json import Jsonb
+from .feature_profiles import FeatureRepositoryMixin
 
 from contracts.profiles import BatchProfile
 from contracts.metrics import MetricKind, MetricPoint
@@ -205,7 +206,7 @@ def _pipeline_run(row: dict[str, Any]) -> PipelineRun:
     )
 
 
-class PostgresMetricRepository(_PostgresRepository):
+class PostgresMetricRepository(FeatureRepositoryMixin, _PostgresRepository):
     """Dataset statistics."""
 
     def save_profile(self, profile: BatchProfile) -> None:

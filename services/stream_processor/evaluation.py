@@ -1,6 +1,7 @@
 """Durable evaluation lifecycle, bounded retries and explicit reevaluation."""
 
 from datetime import datetime, timezone
+from dataclasses import dataclass
 import errno
 import json
 import time
@@ -8,6 +9,12 @@ from uuid import NAMESPACE_URL, uuid5
 
 from contracts.evaluation import Attempt, CheckExecution, Evaluation, ExecutionStatus
 from data_quality.execution import execute_check, finalize
+
+
+@dataclass(frozen=True)
+class PreparedChecks:
+    checks: tuple[CheckExecution, ...]
+    raw_sha256: str | None
 
 
 def transient(error: Exception) -> bool:
@@ -169,7 +176,7 @@ class EvaluationRunner:
             )
             self.repository.save_evaluation(evaluation)
             try:
-                checks = prepare(evaluation)
+                prepared = prepare(evaluation)
             except Exception as error:
                 retryable = transient(error)
                 code = "temporary_error" if retryable else "preparation_error"
@@ -195,7 +202,8 @@ class EvaluationRunner:
                 )
                 evaluation = evaluation.model_copy(
                     update={
-                        "checks": checks,
+                        "checks": prepared.checks,
+                        "raw_sha256": prepared.raw_sha256,
                         "prepared": True,
                         "preparation_attempts": attempts,
                     }

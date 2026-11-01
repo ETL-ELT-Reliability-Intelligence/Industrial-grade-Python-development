@@ -58,6 +58,7 @@ class Evaluation(Contract):
     preparation_attempts: tuple[Attempt, ...] = ()
     delivery_attempts: tuple[Attempt, ...] = ()
     prepared: bool = False
+    raw_sha256: str | None = None
     decision: QualityDecision | None = None
     published: bool = False
 

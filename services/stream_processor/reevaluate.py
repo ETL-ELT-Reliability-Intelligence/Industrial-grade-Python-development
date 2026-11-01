@@ -7,6 +7,7 @@ from pathlib import Path
 from data_quality.config import load_suites
 from services.stream_processor.handlers import StreamEventHandler
 from services.stream_processor.publisher import KafkaPublisher
+from services.stream_processor.feature_accumulation import load_feature_definitions
 from storage.postgres import (
     connect,
     PostgresDatasetRepository,
@@ -32,6 +33,7 @@ def main():
         default=Path(__file__).resolve().parents[2] / "config/quality",
     )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
+    parser.add_argument("--feature-config", type=Path)
     parser.add_argument(
         "--kafka", help="Publish failure notifications; omit for DB-only evaluation"
     )
@@ -56,6 +58,7 @@ def main():
             PostgresMetricRepository(connection),
             quality,
             suites=suites,
+            feature_definitions=load_feature_definitions(args.feature_config),
             publisher=KafkaPublisher(args.kafka) if args.kafka else None,
         )
         evaluation = handler.handle_dataset_ingested(

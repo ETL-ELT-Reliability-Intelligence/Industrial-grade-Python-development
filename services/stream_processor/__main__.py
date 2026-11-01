@@ -15,6 +15,7 @@ from .consumer import StreamProcessorConfig, StreamProcessorRunner, create_kafka
 from .handlers import StreamEventHandler
 from data_quality.config import load_suites
 from .publisher import KafkaPublisher
+from .feature_accumulation import load_feature_definitions
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--group-id", help="Kafka consumer group ID (defaults to KAFKA_GROUP_ID or stream-processor)")
     parser.add_argument("--max-messages", type=int, help="Stop after processing N valid events")
     parser.add_argument("--quality-config", type=Path, default=Path(__file__).resolve().parents[2] / "config/quality")
+    parser.add_argument("--feature-config", type=Path, help="Independent feature definitions (JSON)")
     return parser
 
 
@@ -44,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
             quality=PostgresQualityRepository(connection),
             publisher=KafkaPublisher(config.kafka_bootstrap_servers),
             suites=suites,
+            feature_definitions=load_feature_definitions(args.feature_config),
         )
         consumer = create_kafka_consumer(config)
         runner = StreamProcessorRunner(consumer, handler, poll_timeout=config.poll_timeout)
