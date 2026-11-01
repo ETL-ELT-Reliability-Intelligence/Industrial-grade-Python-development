@@ -111,9 +111,35 @@ class FakePipelines:
 class FakeMetrics:
     def __init__(self) -> None:
         self.profiles = {}
+        self.feature_inputs = {}
+        self.feature_profiles = {}
+        self.profiling_attempts = {}
+        self.feature_links = {}
         self.points: dict[
             tuple[str, str, MetricKind, str | None, str], MetricPoint
         ] = {}
+
+    def register_feature_input(self, dataset_id, batch_id, sha256):
+        from storage.feature_profiles import InputConflict
+
+        key = (dataset_id, batch_id)
+        if self.feature_inputs.setdefault(key, sha256) != sha256:
+            raise InputConflict("batch identity already refers to different raw bytes")
+
+    def get_feature_profile(self, dataset_id, batch_id, sha256, definition_hash, implementation):
+        return self.feature_profiles.get((dataset_id, batch_id, sha256, definition_hash, implementation))
+
+    def save_feature_profile(self, profile):
+        self.register_feature_input(profile.dataset_id, profile.batch_id, profile.raw_sha256)
+        key = (profile.dataset_id, profile.batch_id, profile.raw_sha256,
+               profile.definition_hash, profile.implementation_version)
+        return self.feature_profiles.setdefault(key, profile)
+
+    def save_profiling_attempt(self, attempt):
+        self.profiling_attempts[attempt.attempt_id] = attempt
+
+    def link_feature_evaluation(self, evaluation_id, profile_id, eligible):
+        self.feature_links.setdefault((evaluation_id, profile_id), eligible)
 
     def save_profile(self, profile):
         self.profiles[(profile.event.dataset_id, profile.event.batch_id)] = profile
