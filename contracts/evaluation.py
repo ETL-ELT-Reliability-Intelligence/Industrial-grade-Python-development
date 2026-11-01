@@ -36,6 +36,7 @@ class CheckExecution(Contract):
     code: str | None = None
     message: str | None = None
     attempts: tuple[Attempt, ...] = ()
+    baseline: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def result_state(self):

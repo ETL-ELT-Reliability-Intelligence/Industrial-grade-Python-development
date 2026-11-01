@@ -202,9 +202,16 @@ function loadScopes() {
 
 const labels = {
   row_count: "Число строк", null_rate: "Доля null", min_count: "Минимум строк", max_count: "Максимум строк",
-  max_null_rate: "Максимальная доля null", last_updated_at: "Последнее обновление", evaluated_at: "Момент проверки",
-  max_age: "Допустимый возраст (ISO 8601)", fields: "Поля схемы", name: "Имя", data_type: "Тип данных", allow_extra_fields: "Дополнительные поля разрешены",
+  max_null_rate: "Максимальная доля null", fields: "Поля схемы", name: "Имя", data_type: "Тип данных", allow_extra_fields: "Дополнительные поля разрешены",
+  value: "Значение", minimum: "Нижняя граница", maximum: "Верхняя граница", measurements: "Измерения",
+  distinct_count: "Различных непустых значений", distinct_ratio: "Доля различных значений",
+  sample_count: "Строк в выборке", non_null_count: "Непустых значений", null_count: "Пропусков",
+  invalid_count: "Нарушений", invalid_rate: "Доля нарушений", evaluated_count: "Проверено значений",
+  valid_count: "Распознано значений", parse_errors: "Ошибок преобразования", frequencies: "Частоты",
 };
+
+const checkNames = { row_count: "Аномальный объём", null_rate: "Пропуски", schema: "Схема",
+  cardinality: "Изменение кардинальности", distribution: "Сдвиг распределения", value_rule: "Правило значений" };
 
 function evidence(value) {
   if (value === null || value === undefined) return node("span", "Нет значения", "muted");
@@ -218,7 +225,7 @@ function evidence(value) {
     const dl = node("dl", undefined, "evidence");
     for (const [key, item] of Object.entries(value)) {
       const dd = node("dd");
-      dd.append(item && ["last_updated_at", "evaluated_at"].includes(key) ? timestamp(item) : evidence(item));
+      dd.append(evidence(item));
       dl.append(node("dt", labels[key] || key), dd);
     }
     return dl;
@@ -244,7 +251,7 @@ function renderQuality(data, root) {
   const rows = data.checks.map(stored => {
     const result = stored.result;
     const identity = node("div");
-    identity.append(node("strong", result.check_id), node("p", result.kind, "muted"), node("p", `Колонка: ${result.context?.column ?? "Весь dataset"}`, "muted"));
+    identity.append(node("strong", result.check_id), node("p", checkNames[result.kind] || result.kind, "muted"), node("p", `Колонка: ${result.context?.column ?? "Весь dataset"}`, "muted"));
     const diagnostic = node("div");
     diagnostic.append(node("p", result.reason_code), node("p", result.message));
     if (result.details.length) diagnostic.append(evidence(result.details));

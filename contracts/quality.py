@@ -4,11 +4,10 @@ These models validate inputs; they do not evaluate checks or apply policies.
 None denotes an unavailable observation, never a successful measurement.
 """
 
-from datetime import timedelta
 from enum import Enum
 from typing import Self
 
-from pydantic import AwareDatetime, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from contracts.base import Contract, Count, NonBlankText, Rate
 
@@ -16,7 +15,9 @@ from contracts.base import Contract, Count, NonBlankText, Rate
 class CheckKind(str, Enum):
     """Supported deterministic checks and their stable identifiers."""
 
-    FRESHNESS = "freshness"
+    CARDINALITY = "cardinality"
+    DISTRIBUTION = "distribution"
+    VALUE_RULE = "value_rule"
     NULL_RATE = "null_rate"
     ROW_COUNT = "row_count"
     SCHEMA = "schema"
@@ -50,23 +51,28 @@ class QualityContext(Contract):
     column: NonBlankText | None = None
 
 
-class FreshnessObservation(Contract):
-    """Last update time and an explicit evaluation time supplied by the caller."""
+class ScalarObservation(Contract):
+    """A derived score, with reproducible supporting measurements."""
 
-    last_updated_at: AwareDatetime | None
-    evaluated_at: AwareDatetime
+    value: float | None = Field(default=None, allow_inf_nan=False)
+    measurements: dict = Field(default_factory=dict)
+
+
+class ScalarConstraint(Contract):
+    minimum: float | None = Field(default=None, allow_inf_nan=False)
+    maximum: float | None = Field(default=None, allow_inf_nan=False)
 
     @model_validator(mode="after")
-    def chronological(self) -> Self:
-        if self.last_updated_at is not None and self.last_updated_at > self.evaluated_at:
-            raise ValueError("last_updated_at must not be after evaluated_at")
+    def bounds(self):
+        if self.minimum is None and self.maximum is None:
+            raise ValueError("at least one bound is required")
+        if (
+            self.minimum is not None
+            and self.maximum is not None
+            and self.minimum > self.maximum
+        ):
+            raise ValueError("minimum exceeds maximum")
         return self
-
-
-class FreshnessConstraint(Contract):
-    """Maximum age, inclusive; no implicit wall clock or schedule."""
-
-    max_age: timedelta = Field(ge=timedelta(0))
 
 
 class NullRateObservation(Contract):
@@ -97,7 +103,11 @@ class RowCountConstraint(Contract):
     def consistent_bounds(self) -> Self:
         if self.min_count is None and self.max_count is None:
             raise ValueError("at least one row count bound is required")
-        if self.min_count is not None and self.max_count is not None and self.min_count > self.max_count:
+        if (
+            self.min_count is not None
+            and self.max_count is not None
+            and self.min_count > self.max_count
+        ):
             raise ValueError("min_count must not exceed max_count")
         return self
 
@@ -116,7 +126,9 @@ class SchemaObservation(Contract):
 
     @field_validator("fields")
     @classmethod
-    def unique_fields(cls, value: tuple[SchemaField, ...] | None) -> tuple[SchemaField, ...] | None:
+    def unique_fields(
+        cls, value: tuple[SchemaField, ...] | None
+    ) -> tuple[SchemaField, ...] | None:
         if value is not None and len({field.name for field in value}) != len(value):
             raise ValueError("schema field names must be unique")
         return value
@@ -130,20 +142,28 @@ class SchemaConstraint(Contract):
 
     @field_validator("fields")
     @classmethod
-    def unique_fields(cls, value: tuple[SchemaField, ...] | None) -> tuple[SchemaField, ...] | None:
+    def unique_fields(
+        cls, value: tuple[SchemaField, ...] | None
+    ) -> tuple[SchemaField, ...] | None:
         if value is not None and len({field.name for field in value}) != len(value):
             raise ValueError("schema field names must be unique")
         return value
 
 
-Observation = FreshnessObservation | NullRateObservation | RowCountObservation | SchemaObservation
+Observation = (
+    ScalarObservation | NullRateObservation | RowCountObservation | SchemaObservation
+)
 
 
-Constraint = FreshnessConstraint | NullRateConstraint | RowCountConstraint | SchemaConstraint
+Constraint = (
+    ScalarConstraint | NullRateConstraint | RowCountConstraint | SchemaConstraint
+)
 
 
 _CHECK_TYPES = {
-    CheckKind.FRESHNESS: (FreshnessObservation, FreshnessConstraint),
+    CheckKind.CARDINALITY: (ScalarObservation, ScalarConstraint),
+    CheckKind.DISTRIBUTION: (ScalarObservation, ScalarConstraint),
+    CheckKind.VALUE_RULE: (ScalarObservation, ScalarConstraint),
     CheckKind.NULL_RATE: (NullRateObservation, NullRateConstraint),
     CheckKind.ROW_COUNT: (RowCountObservation, RowCountConstraint),
     CheckKind.SCHEMA: (SchemaObservation, SchemaConstraint),

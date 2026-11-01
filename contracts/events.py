@@ -56,6 +56,21 @@ class DatasetIngestedEvent(Event):
     received_at: AwareDatetime
     schema_version: int = Field(ge=1)
     raw_uri: NonBlankText | None = None
+    source_id: NonBlankText = "unspecified"
+    granularity: Literal["batch", "hour", "month"] = "batch"
+    period_start: AwareDatetime | None = None
+    period_end: AwareDatetime | None = None
+    complete: bool = True
+
+    @model_validator(mode="after")
+    def period(self):
+        if (self.period_start is None) != (self.period_end is None):
+            raise ValueError("both period boundaries are required")
+        if self.period_start is not None and self.period_end <= self.period_start:
+            raise ValueError("period_end must follow period_start")
+        if self.granularity != "batch" and self.period_start is None:
+            raise ValueError("windowed data requires a period")
+        return self
 
     @property
     def key(self) -> str:

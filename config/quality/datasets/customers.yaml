@@ -1,0 +1,26 @@
+dataset_id: customers
+version: 2
+profile: standard
+checks:
+  customer_state.distribution:
+    kind: distribution
+    column: customer_state
+    params:
+      data_type: categorical
+    on_fail: WARN
+  customer_city.cardinality:
+    kind: cardinality
+    column: customer_city
+    params: {}
+    on_fail: WARN
+  customer_state.cardinality:
+    kind: cardinality
+    column: customer_state
+    params: {}
+    on_fail: WARN
+  customer_state.null_growth:
+    kind: null_rate
+    column: customer_state
+    params:
+      mode: historical
+    on_fail: WARN

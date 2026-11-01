@@ -10,6 +10,7 @@ from contextlib import AbstractContextManager
 
 from contracts.evaluation import Evaluation, CheckExecution
 
+from contracts.profiles import BatchProfile
 from contracts.metrics import MetricKind, MetricPoint
 from contracts.quality import CheckResult, QualityDecision, SchemaField
 from contracts.state import Anomaly, Batch, PipelineRun, UserAction
@@ -23,8 +24,11 @@ class DatasetRepository(Protocol):
         ...
 
     def save_schema(
-        self, dataset_id: str, schema_version: int,
-        fields: tuple[SchemaField, ...], observed_at: datetime,
+        self,
+        dataset_id: str,
+        schema_version: int,
+        fields: tuple[SchemaField, ...],
+        observed_at: datetime,
     ) -> None:
         """Store a schema version; a version never changes once stored.
 
@@ -32,7 +36,9 @@ class DatasetRepository(Protocol):
         """
         ...
 
-    def get_schema(self, dataset_id: str, schema_version: int) -> tuple[SchemaField, ...] | None: ...
+    def get_schema(
+        self, dataset_id: str, schema_version: int
+    ) -> tuple[SchemaField, ...] | None: ...
 
     def upsert_batch(self, batch: Batch) -> None:
         """Insert or update a batch; a missing object_key keeps the stored one."""
@@ -54,7 +60,9 @@ class PipelineRunRepository(Protocol):
 
     def get_pipeline_run(self, pipeline_id: str, run_id: str) -> PipelineRun | None: ...
 
-    def list_pipeline_runs(self, pipeline_id: str, limit: int = 100) -> list[PipelineRun]:
+    def list_pipeline_runs(
+        self, pipeline_id: str, limit: int = 100
+    ) -> list[PipelineRun]:
         """Return runs, newest started first."""
         ...
 
@@ -62,13 +70,24 @@ class PipelineRunRepository(Protocol):
 class MetricRepository(Protocol):
     """Dataset statistics, the input of baselines and anomaly detection."""
 
+    def save_profile(self, profile: BatchProfile) -> None: ...
+
+    def list_profiles(self, dataset_id: str) -> list[BatchProfile]: ...
+
+    def set_profile_eligible(
+        self, dataset_id: str, scope_id: str, eligible: bool
+    ) -> None: ...
+
     def save_metric(self, point: MetricPoint) -> None:
         """Insert or update the point with the same dataset, scope, metric, column and version."""
         ...
 
     def list_metric_history(
-        self, dataset_id: str, metric: MetricKind,
-        column: str | None = None, limit: int = 100,
+        self,
+        dataset_id: str,
+        metric: MetricKind,
+        column: str | None = None,
+        limit: int = 100,
     ) -> list[MetricPoint]:
         """Return points of one metric and column, newest observed first."""
         ...
@@ -77,7 +96,9 @@ class MetricRepository(Protocol):
 class QualityRepository(Protocol):
     """Results of deterministic checks and policy decisions."""
 
-    def evaluation_lock(self, dataset_id: str, scope_id: str) -> AbstractContextManager: ...
+    def evaluation_lock(
+        self, dataset_id: str, scope_id: str
+    ) -> AbstractContextManager: ...
 
     def get_evaluation(self, evaluation_id: str) -> Evaluation | None: ...
 
@@ -103,12 +124,18 @@ class QualityRepository(Protocol):
         ...
 
     def save_quality_decision(
-        self, dataset_id: str, scope_id: str, decision: QualityDecision, decided_at: datetime,
+        self,
+        dataset_id: str,
+        scope_id: str,
+        decision: QualityDecision,
+        decided_at: datetime,
     ) -> None:
         """Store the decision for a scope, replacing an earlier one."""
         ...
 
-    def get_quality_decision(self, dataset_id: str, scope_id: str) -> QualityDecision | None: ...
+    def get_quality_decision(
+        self, dataset_id: str, scope_id: str
+    ) -> QualityDecision | None: ...
 
 
 class AnomalyRepository(Protocol):
@@ -120,7 +147,9 @@ class AnomalyRepository(Protocol):
 
     def get_anomaly(self, anomaly_id: str) -> Anomaly | None: ...
 
-    def list_anomalies(self, dataset_id: str | None = None, limit: int = 100) -> list[Anomaly]:
+    def list_anomalies(
+        self, dataset_id: str | None = None, limit: int = 100
+    ) -> list[Anomaly]:
         """Return anomalies, newest detected first, optionally of one dataset."""
         ...
 
@@ -132,6 +161,8 @@ class UserActionRepository(Protocol):
         """Store an action; an already stored action_id is left unchanged."""
         ...
 
-    def list_actions(self, target_type: str, target_id: str, limit: int = 100) -> list[UserAction]:
+    def list_actions(
+        self, target_type: str, target_id: str, limit: int = 100
+    ) -> list[UserAction]:
         """Return actions on one entity, newest first."""
         ...

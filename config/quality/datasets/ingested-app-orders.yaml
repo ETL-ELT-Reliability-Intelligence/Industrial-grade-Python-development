@@ -1,0 +1,33 @@
+dataset_id: ingested-app-orders
+version: 2
+profile: standard
+checks:
+  amount.non_negative:
+    kind: value_rule
+    column: amount
+    params:
+      rule: non_negative
+    on_fail: BLOCK
+  amount.distribution:
+    kind: distribution
+    column: amount
+    params:
+      data_type: numeric
+      bins:
+      - 0
+      - 5
+      - 10
+      - 25
+      - 50
+      - 100
+      - 250
+      - 500
+      - 1000
+      - 5000
+    on_fail: WARN
+  amount.null_growth:
+    kind: null_rate
+    column: amount
+    params:
+      mode: historical
+    on_fail: WARN

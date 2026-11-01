@@ -5,18 +5,28 @@ types; timestamps are ISO 8601 strings and durations are seconds.
 """
 
 from collections.abc import Mapping
-from datetime import timedelta
 import json
 from typing import Any
 
-from pydantic import Field, TypeAdapter
+from pydantic import TypeAdapter
 
-from contracts.base import Contract
 from contracts.quality import (
-    CheckDetail, CheckKind, CheckResult, CheckStatus, Constraint,
-    DecisionReason, FreshnessConstraint, FreshnessObservation,
-    NullRateConstraint, NullRateObservation, Observation, QualityContext,
-    RowCountConstraint, RowCountObservation, SchemaConstraint, SchemaField,
+    CheckDetail,
+    CheckKind,
+    CheckResult,
+    CheckStatus,
+    Constraint,
+    DecisionReason,
+    ScalarConstraint,
+    ScalarObservation,
+    NullRateConstraint,
+    NullRateObservation,
+    Observation,
+    QualityContext,
+    RowCountConstraint,
+    RowCountObservation,
+    SchemaConstraint,
+    SchemaField,
     SchemaObservation,
 )
 
@@ -25,32 +35,35 @@ _FIELDS = TypeAdapter(tuple[SchemaField, ...] | None)
 _DETAILS = TypeAdapter(tuple[CheckDetail, ...])
 _REASONS = TypeAdapter(tuple[DecisionReason, ...])
 _OBSERVATIONS = {
-    CheckKind.FRESHNESS: FreshnessObservation,
+    CheckKind.CARDINALITY: ScalarObservation,
+    CheckKind.DISTRIBUTION: ScalarObservation,
+    CheckKind.VALUE_RULE: ScalarObservation,
     CheckKind.NULL_RATE: NullRateObservation,
     CheckKind.ROW_COUNT: RowCountObservation,
     CheckKind.SCHEMA: SchemaObservation,
 }
 _CONSTRAINTS = {
+    CheckKind.CARDINALITY: ScalarConstraint,
+    CheckKind.DISTRIBUTION: ScalarConstraint,
+    CheckKind.VALUE_RULE: ScalarConstraint,
     CheckKind.NULL_RATE: NullRateConstraint,
     CheckKind.ROW_COUNT: RowCountConstraint,
     CheckKind.SCHEMA: SchemaConstraint,
 }
 
 
-class _StoredFreshnessConstraint(Contract):
-    """Preserve the existing JSONB duration format, independently of model JSON."""
-
-    max_age_seconds: float = Field(ge=0, allow_inf_nan=False)
-
-
-def fields_to_json(fields: tuple[SchemaField, ...] | None) -> list[dict[str, str]] | None:
+def fields_to_json(
+    fields: tuple[SchemaField, ...] | None,
+) -> list[dict[str, str]] | None:
     """Encode schema fields, preserving None for an unavailable schema."""
     if fields is None:
         return None
     return [item.model_dump(mode="json") for item in fields]
 
 
-def fields_from_json(data: list[dict[str, str]] | None) -> tuple[SchemaField, ...] | None:
+def fields_from_json(
+    data: list[dict[str, str]] | None,
+) -> tuple[SchemaField, ...] | None:
     """Decode schema fields encoded by fields_to_json."""
     return _FIELDS.validate_json(json.dumps(data), strict=True)
 
@@ -64,8 +77,6 @@ def observation_to_json(observation: Observation) -> dict[str, Any]:
 
 def constraint_to_json(constraint: Constraint) -> dict[str, Any]:
     """Encode any quality constraint as a JSON object."""
-    if isinstance(constraint, FreshnessConstraint):
-        return {"max_age_seconds": constraint.max_age.total_seconds()}
     if isinstance(constraint, tuple(_CONSTRAINTS.values())):
         return constraint.model_dump(mode="json")
     raise ValueError("unsupported constraint type")
@@ -78,9 +89,6 @@ def observation_from_json(kind: CheckKind, data: Mapping[str, Any]) -> Observati
 
 def constraint_from_json(kind: CheckKind, data: Mapping[str, Any]) -> Constraint:
     """Decode the constraint of a check of the given kind."""
-    if kind is CheckKind.FRESHNESS:
-        stored = _StoredFreshnessConstraint.model_validate_json(json.dumps(dict(data)))
-        return FreshnessConstraint(max_age=timedelta(seconds=stored.max_age_seconds))
     return _CONSTRAINTS[kind].model_validate_json(json.dumps(dict(data)))
 
 
@@ -135,6 +143,10 @@ def check_result_from_row(row: Mapping[str, Any]) -> CheckResult:
         constraint=constraint_from_json(kind, row["constraint_spec"]),
         reason_code=row["reason_code"],
         message=row["message"],
-        context=QualityContext(dataset_id=row["dataset_id"], scope_id=row["scope_id"], column=row["column_name"]),
+        context=QualityContext(
+            dataset_id=row["dataset_id"],
+            scope_id=row["scope_id"],
+            column=row["column_name"],
+        ),
         details=details_from_json(row["details"]),
     )

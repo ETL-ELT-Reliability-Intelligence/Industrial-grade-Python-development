@@ -474,7 +474,7 @@ Redis не требуется для первой версии.
 - dataset statistics;
 - historical metrics;
 - schemas;
-- freshness;
+- distribution profiles;
 - execution times.
 
 ## Rule Engine
@@ -484,7 +484,7 @@ Redis не требуется для первой версии.
 Примеры:
 
 ```text
-freshness > threshold
+distribution_distance > threshold
 row_count < threshold
 schema changed
 null_rate > threshold
@@ -843,7 +843,7 @@ orders
 Current status: WARNING
 
 Row count
-Freshness
+Distribution shift
 Null rate
 Schema
 Historical anomalies

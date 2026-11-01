@@ -34,8 +34,8 @@ last_saved_at DESC / scope_id ASC. Пагинация offset не гаранти
 
 `checks` — список `{result: CheckResult, recorded_at}`. `decision` — исходный
 `QualityDecision` или null. Используется канонический десериализатор storage,
-включая JSONB freshness; HTTP-сериализация общего Pydantic-контракта передаёт
-timedelta как ISO 8601 duration. API не возвращает внутренний JSONB напрямую.
+поддерживающий статистические проверки и правила значений. API не возвращает
+внутренний JSONB напрямую. Эталон исторической проверки доступен в details результата.
 
 `quality-scopes` объединяет scopes из quality_check_results и quality_decisions,
 включая проверки без решения и решение без проверок. Он не выводится из batches.

@@ -11,13 +11,23 @@ from contracts.events import (
     SchemaChangedEvent,
 )
 from contracts.metrics import MetricKind, MetricPoint
-from contracts.quality import CheckKind, CheckResult, CheckStatus, QualityDecision, QualityStatus, SchemaField
+from contracts.quality import (
+    CheckKind,
+    CheckResult,
+    CheckStatus,
+    QualityDecision,
+    QualityStatus,
+    SchemaField,
+)
 from contracts.state import Batch, PipelineRun, PipelineRunStatus
 from services.stream_processor.handlers import StreamEventHandler
 from contextlib import nullcontext
 from contracts.evaluation import Evaluation
 from contracts.quality_config import CheckSuite
-from services.stream_processor.publisher import InMemoryPublisher, quality_failed_event_id
+from services.stream_processor.publisher import (
+    InMemoryPublisher,
+    quality_failed_event_id,
+)
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
 MINUTE = timedelta(minutes=1)
@@ -33,8 +43,11 @@ class FakeDatasets:
         self.datasets.add(dataset_id)
 
     def save_schema(
-        self, dataset_id: str, schema_version: int,
-        fields: tuple[SchemaField, ...], observed_at: datetime,
+        self,
+        dataset_id: str,
+        schema_version: int,
+        fields: tuple[SchemaField, ...],
+        observed_at: datetime,
     ) -> None:
         self.ensure_dataset(dataset_id)
         key = (dataset_id, schema_version)
@@ -42,13 +55,19 @@ class FakeDatasets:
             raise ValueError("schema version already stored with different fields")
         self.schemas[key] = fields
 
-    def get_schema(self, dataset_id: str, schema_version: int) -> tuple[SchemaField, ...] | None:
+    def get_schema(
+        self, dataset_id: str, schema_version: int
+    ) -> tuple[SchemaField, ...] | None:
         return self.schemas.get((dataset_id, schema_version))
 
     def upsert_batch(self, batch: Batch) -> None:
         self.ensure_dataset(batch.dataset_id)
         existing = self.batches.get((batch.dataset_id, batch.batch_id))
-        object_key = batch.object_key if batch.object_key is not None else (existing.object_key if existing else None)
+        object_key = (
+            batch.object_key
+            if batch.object_key is not None
+            else (existing.object_key if existing else None)
+        )
         self.batches[(batch.dataset_id, batch.batch_id)] = Batch(
             dataset_id=batch.dataset_id,
             batch_id=batch.batch_id,
@@ -81,7 +100,9 @@ class FakePipelines:
     def get_pipeline_run(self, pipeline_id: str, run_id: str) -> PipelineRun | None:
         return self.runs.get((pipeline_id, run_id))
 
-    def list_pipeline_runs(self, pipeline_id: str, limit: int = 100) -> list[PipelineRun]:
+    def list_pipeline_runs(
+        self, pipeline_id: str, limit: int = 100
+    ) -> list[PipelineRun]:
         items = [r for r in self.runs.values() if r.pipeline_id == pipeline_id]
         items.sort(key=lambda r: (r.started_at, r.run_id), reverse=True)
         return items[:limit]
@@ -89,18 +110,44 @@ class FakePipelines:
 
 class FakeMetrics:
     def __init__(self) -> None:
-        self.points: dict[tuple[str, str, MetricKind, str | None, str], MetricPoint] = {}
+        self.profiles = {}
+        self.points: dict[
+            tuple[str, str, MetricKind, str | None, str], MetricPoint
+        ] = {}
+
+    def save_profile(self, profile):
+        self.profiles[(profile.event.dataset_id, profile.event.batch_id)] = profile
+
+    def list_profiles(self, dataset_id):
+        return [p for (d, _), p in self.profiles.items() if d == dataset_id]
+
+    def set_profile_eligible(self, dataset_id, scope_id, eligible):
+        key = (dataset_id, scope_id)
+        if key in self.profiles:
+            self.profiles[key] = self.profiles[key].model_copy(
+                update={"eligible": eligible}
+            )
 
     def save_metric(self, point: MetricPoint) -> None:
-        key = (point.dataset_id, point.scope_id, point.metric, point.column, point.stats_version)
+        key = (
+            point.dataset_id,
+            point.scope_id,
+            point.metric,
+            point.column,
+            point.stats_version,
+        )
         self.points[key] = point
 
     def list_metric_history(
-        self, dataset_id: str, metric: MetricKind,
-        column: str | None = None, limit: int = 100,
+        self,
+        dataset_id: str,
+        metric: MetricKind,
+        column: str | None = None,
+        limit: int = 100,
     ) -> list[MetricPoint]:
         items = [
-            p for p in self.points.values()
+            p
+            for p in self.points.values()
             if p.dataset_id == dataset_id and p.metric is metric and p.column == column
         ]
         items.sort(key=lambda p: (p.observed_at, p.scope_id), reverse=True)
@@ -121,27 +168,49 @@ class FakeQuality:
 
     def save_evaluation(self, evaluation):
         if evaluation.evaluation_id not in self.evaluations:
-            self.decisions.pop((evaluation.event.dataset_id, evaluation.event.batch_id), None)
-        self.evaluations[evaluation.evaluation_id] = Evaluation.model_validate_json(evaluation.model_dump_json())
+            self.decisions.pop(
+                (evaluation.event.dataset_id, evaluation.event.batch_id), None
+            )
+        self.evaluations[evaluation.evaluation_id] = Evaluation.model_validate_json(
+            evaluation.model_dump_json()
+        )
 
     def save_execution(self, evaluation_id, execution):
         evaluation = self.evaluations[evaluation_id]
-        checks = tuple(execution if c.check_id == execution.check_id else c for c in evaluation.checks)
+        checks = tuple(
+            execution if c.check_id == execution.check_id else c
+            for c in evaluation.checks
+        )
         self.save_evaluation(evaluation.model_copy(update={"checks": checks}))
 
     def list_evaluations(self, dataset_id, scope_id):
-        return [e for e in reversed(list(self.evaluations.values())) if e.event.dataset_id == dataset_id and e.event.batch_id == scope_id]
+        return [
+            e
+            for e in reversed(list(self.evaluations.values()))
+            if e.event.dataset_id == dataset_id and e.event.batch_id == scope_id
+        ]
 
     def project_evaluation(self, evaluation):
         event = evaluation.event
-        if self.list_evaluations(event.dataset_id, event.batch_id)[0].evaluation_id != evaluation.evaluation_id:
+        if (
+            self.list_evaluations(event.dataset_id, event.batch_id)[0].evaluation_id
+            != evaluation.evaluation_id
+        ):
             return
-        self.results = {k: v for k, v in self.results.items() if (k[1], k[2]) != (event.dataset_id, event.batch_id)}
+        self.results = {
+            k: v
+            for k, v in self.results.items()
+            if (k[1], k[2]) != (event.dataset_id, event.batch_id)
+        }
         for check in evaluation.checks:
             if check.result is not None:
                 self.save_check_result(check.result)
-        self.save_quality_decision(event.dataset_id, event.batch_id, evaluation.decision, evaluation.evaluated_at)
-
+        self.save_quality_decision(
+            event.dataset_id,
+            event.batch_id,
+            evaluation.decision,
+            evaluation.evaluated_at,
+        )
 
     def save_check_result(self, result: CheckResult) -> None:
         if result.context is None:
@@ -156,18 +225,29 @@ class FakeQuality:
 
     def list_check_results(self, dataset_id: str, scope_id: str) -> list[CheckResult]:
         items = [
-            r for r in self.results.values()
-            if r.context and r.context.dataset_id == dataset_id and r.context.scope_id == scope_id
+            r
+            for r in self.results.values()
+            if r.context
+            and r.context.dataset_id == dataset_id
+            and r.context.scope_id == scope_id
         ]
-        items.sort(key=lambda r: (r.check_id, r.context.column or "" if r.context else ""))
+        items.sort(
+            key=lambda r: (r.check_id, r.context.column or "" if r.context else "")
+        )
         return items
 
     def save_quality_decision(
-        self, dataset_id: str, scope_id: str, decision: QualityDecision, decided_at: datetime,
+        self,
+        dataset_id: str,
+        scope_id: str,
+        decision: QualityDecision,
+        decided_at: datetime,
     ) -> None:
         self.decisions[(dataset_id, scope_id)] = decision
 
-    def get_quality_decision(self, dataset_id: str, scope_id: str) -> QualityDecision | None:
+    def get_quality_decision(
+        self, dataset_id: str, scope_id: str
+    ) -> QualityDecision | None:
         return self.decisions.get((dataset_id, scope_id))
 
 
@@ -178,17 +258,30 @@ def write_batch(tmp_path, name: str, records: list[dict]) -> str:
 
 
 def test_suite(dataset_id="orders"):
-    return CheckSuite.model_validate_json(json.dumps({
-        "dataset_id": dataset_id,
-        "retry": {"max_attempts": 3, "delays_seconds": [0, 0]},
-        "checks": [
-            {"key": "schema", "kind": "schema"},
-            {"key": "freshness", "kind": "freshness"},
-            {"key": "id.null_rate", "kind": "null_rate", "column": "id"},
-            {"key": "amount.null_rate", "kind": "null_rate", "column": "amount"},
-            {"key": "row_count", "kind": "row_count"},
-        ],
-    }))
+    return CheckSuite.model_validate_json(
+        json.dumps(
+            {
+                "dataset_id": dataset_id,
+                "retry": {"max_attempts": 3, "delays_seconds": [0, 0]},
+                "checks": [
+                    {"key": "schema", "kind": "schema"},
+                    {
+                        "key": "id.null_rate",
+                        "kind": "null_rate",
+                        "column": "id",
+                        "params": {"mode": "fixed"},
+                    },
+                    {
+                        "key": "amount.null_rate",
+                        "kind": "null_rate",
+                        "column": "amount",
+                        "params": {"mode": "fixed"},
+                    },
+                    {"key": "row_count", "kind": "row_count"},
+                ],
+            }
+        )
+    )
 
 
 test_suite.__test__ = False
@@ -201,37 +294,58 @@ def make_handler(clock=lambda: NOW + MINUTE, suites=None):
     quality = FakeQuality()
     publisher = InMemoryPublisher()
     handler = StreamEventHandler(
-        datasets, pipelines, metrics, quality,
-        publisher=publisher, suites=suites if suites is not None else {"orders": test_suite()}, clock=clock, sleep=lambda _: None,
+        datasets,
+        pipelines,
+        metrics,
+        quality,
+        publisher=publisher,
+        suites=suites if suites is not None else {"orders": test_suite()},
+        clock=clock,
+        sleep=lambda _: None,
     )
     return handler, datasets, pipelines, metrics, quality, publisher
 
 
 def test_first_batch_saves_metrics_and_warns_about_missing_baselines(tmp_path):
     handler, datasets, _, metrics, quality, publisher = make_handler()
-    uri = write_batch(tmp_path, "b1", [{"id": 1, "amount": 10.0}, {"id": 2, "amount": 20.0}])
+    uri = write_batch(
+        tmp_path, "b1", [{"id": 1, "amount": 10.0}, {"id": 2, "amount": 20.0}]
+    )
     event = DatasetIngestedEvent(
-        dataset_id="orders", batch_id="b1", records=2,
-        received_at=NOW, schema_version=1, raw_uri=uri,
+        dataset_id="orders",
+        batch_id="b1",
+        records=2,
+        received_at=NOW,
+        schema_version=1,
+        raw_uri=uri,
     )
 
     handler.handle(event)
 
     assert datasets.get_batch("orders", "b1") == Batch(
-        dataset_id="orders", batch_id="b1", records=2,
-        received_at=NOW, schema_version=1, object_key=uri,
+        dataset_id="orders",
+        batch_id="b1",
+        records=2,
+        received_at=NOW,
+        schema_version=1,
+        object_key=uri,
     )
     assert datasets.get_schema("orders", 1) == (
         SchemaField(name="amount", data_type="number"),
         SchemaField(name="id", data_type="integer"),
     )
     assert metrics.list_metric_history("orders", MetricKind.ROW_COUNT)[0].value == 2
-    assert metrics.list_metric_history("orders", MetricKind.FRESHNESS_SECONDS)[0].value == 60.0
-    assert metrics.list_metric_history("orders", MetricKind.NULL_RATE, "id")[0].value == 0.0
-    assert metrics.list_metric_history("orders", MetricKind.DISTINCT_COUNT, "id")[0].value == 2
+    assert (
+        metrics.list_metric_history("orders", MetricKind.NULL_RATE, "id")[0].value
+        == 0.0
+    )
+    assert (
+        metrics.list_metric_history("orders", MetricKind.DISTINCT_COUNT, "id")[0].value
+        == 2
+    )
 
     results = quality.list_check_results("orders", "b1")
-    assert {r.kind for r in results} == {CheckKind.FRESHNESS, CheckKind.NULL_RATE}
+    assert {r.kind for r in results} == {CheckKind.NULL_RATE}
     assert quality.get_quality_decision("orders", "b1").status is QualityStatus.WARN
     assert publisher.events == []
 
@@ -240,8 +354,12 @@ def test_redelivered_event_is_idempotent_without_duplicates(tmp_path):
     handler, datasets, _, metrics, quality, _ = make_handler()
     uri = write_batch(tmp_path, "b1", [{"id": 1}, {"id": 2}, {"id": 3}])
     event = DatasetIngestedEvent(
-        dataset_id="orders", batch_id="b1", records=3,
-        received_at=NOW, schema_version=1, raw_uri=uri,
+        dataset_id="orders",
+        batch_id="b1",
+        records=3,
+        received_at=NOW,
+        schema_version=1,
+        raw_uri=uri,
     )
 
     handler.handle(event)
@@ -249,7 +367,7 @@ def test_redelivered_event_is_idempotent_without_duplicates(tmp_path):
 
     assert len(datasets.list_batches("orders")) == 1
     assert len(metrics.list_metric_history("orders", MetricKind.ROW_COUNT)) == 1
-    assert len(quality.list_check_results("orders", "b1")) == 3
+    assert len(quality.list_check_results("orders", "b1")) == 2
 
 
 def test_row_count_drop_after_history_fails_and_blocks(tmp_path):
@@ -257,16 +375,28 @@ def test_row_count_drop_after_history_fails_and_blocks(tmp_path):
     rows_10 = [{"id": i, "amount": float(i)} for i in range(10)]
     for idx in range(1, 4):
         uri = write_batch(tmp_path, f"b{idx}", rows_10)
-        handler.handle(DatasetIngestedEvent(
-            dataset_id="orders", batch_id=f"b{idx}", records=10,
-            received_at=NOW + idx * MINUTE, schema_version=1, raw_uri=uri,
-        ))
+        handler.handle(
+            DatasetIngestedEvent(
+                dataset_id="orders",
+                batch_id=f"b{idx}",
+                records=10,
+                received_at=NOW + idx * MINUTE,
+                schema_version=1,
+                raw_uri=uri,
+            )
+        )
 
     uri_drop = write_batch(tmp_path, "b4", rows_10[:4])
-    handler.handle(DatasetIngestedEvent(
-        dataset_id="orders", batch_id="b4", records=4,
-        received_at=NOW + 4 * MINUTE, schema_version=1, raw_uri=uri_drop,
-    ))
+    handler.handle(
+        DatasetIngestedEvent(
+            dataset_id="orders",
+            batch_id="b4",
+            records=4,
+            received_at=NOW + 4 * MINUTE,
+            schema_version=1,
+            raw_uri=uri_drop,
+        )
+    )
 
     results = {r.check_id: r for r in quality.list_check_results("orders", "b4")}
     assert results["orders.row_count"].status is CheckStatus.FAIL
@@ -276,22 +406,39 @@ def test_row_count_drop_after_history_fails_and_blocks(tmp_path):
     failed = publisher.events[0]
     assert isinstance(failed, DataQualityFailedEvent)
     assert failed.check_id == "orders.row_count"
-    assert failed.event_id == quality_failed_event_id("orders", "b4", "orders.row_count", quality.list_evaluations("orders", "b4")[0].evaluation_id)
+    assert failed.event_id == quality_failed_event_id(
+        "orders",
+        "b4",
+        "orders.row_count",
+        quality.list_evaluations("orders", "b4")[0].evaluation_id,
+    )
 
 
 def test_schema_change_fails_check_and_saves_new_version(tmp_path):
     handler, datasets, _, _, quality, publisher = make_handler()
     uri1 = write_batch(tmp_path, "b1", [{"id": 1, "amount": 10.0}])
-    handler.handle(DatasetIngestedEvent(
-        dataset_id="orders", batch_id="b1", records=1,
-        received_at=NOW, schema_version=1, raw_uri=uri1,
-    ))
+    handler.handle(
+        DatasetIngestedEvent(
+            dataset_id="orders",
+            batch_id="b1",
+            records=1,
+            received_at=NOW,
+            schema_version=1,
+            raw_uri=uri1,
+        )
+    )
 
     uri2 = write_batch(tmp_path, "b2", [{"id": 1, "amount": 10.0, "extra": "x"}])
-    handler.handle(DatasetIngestedEvent(
-        dataset_id="orders", batch_id="b2", records=1,
-        received_at=NOW + MINUTE, schema_version=2, raw_uri=uri2,
-    ))
+    handler.handle(
+        DatasetIngestedEvent(
+            dataset_id="orders",
+            batch_id="b2",
+            records=1,
+            received_at=NOW + MINUTE,
+            schema_version=2,
+            raw_uri=uri2,
+        )
+    )
 
     results = {r.check_id: r for r in quality.list_check_results("orders", "b2")}
     assert results["orders.schema"].status is CheckStatus.FAIL
@@ -304,8 +451,12 @@ def test_schema_change_fails_check_and_saves_new_version(tmp_path):
 def test_event_without_raw_uri_saves_batch_only():
     handler, datasets, _, metrics, quality, publisher = make_handler()
     event = DatasetIngestedEvent(
-        dataset_id="orders", batch_id="b1", records=10,
-        received_at=NOW, schema_version=1, raw_uri=None,
+        dataset_id="orders",
+        batch_id="b1",
+        records=10,
+        received_at=NOW,
+        schema_version=1,
+        raw_uri=None,
     )
 
     handler.handle(event)
@@ -319,25 +470,42 @@ def test_event_without_raw_uri_saves_batch_only():
 
 def test_pipeline_events_update_pipeline_runs_and_keep_terminal_state():
     handler, _, pipelines, _, _, _ = make_handler()
-    started = PipelineStartedEvent(pipeline_id="orders_daily", run_id="r1", started_at=NOW)
+    started = PipelineStartedEvent(
+        pipeline_id="orders_daily", run_id="r1", started_at=NOW
+    )
     finished = PipelineFinishedEvent(
-        pipeline_id="orders_daily", run_id="r1", started_at=NOW, finished_at=NOW + MINUTE,
+        pipeline_id="orders_daily",
+        run_id="r1",
+        started_at=NOW,
+        finished_at=NOW + MINUTE,
     )
     failed = PipelineFailedEvent(
-        pipeline_id="orders_daily", run_id="r2", started_at=NOW,
-        failed_at=NOW + MINUTE, error="boom",
+        pipeline_id="orders_daily",
+        run_id="r2",
+        started_at=NOW,
+        failed_at=NOW + MINUTE,
+        error="boom",
     )
 
     handler.handle(started)
-    assert pipelines.get_pipeline_run("orders_daily", "r1").status is PipelineRunStatus.RUNNING
+    assert (
+        pipelines.get_pipeline_run("orders_daily", "r1").status
+        is PipelineRunStatus.RUNNING
+    )
 
     handler.handle(finished)
-    assert pipelines.get_pipeline_run("orders_daily", "r1").status is PipelineRunStatus.SUCCESS
+    assert (
+        pipelines.get_pipeline_run("orders_daily", "r1").status
+        is PipelineRunStatus.SUCCESS
+    )
     assert pipelines.get_pipeline_run("orders_daily", "r1").finished_at == NOW + MINUTE
 
     # Late started event must not overwrite terminal status
     handler.handle(started)
-    assert pipelines.get_pipeline_run("orders_daily", "r1").status is PipelineRunStatus.SUCCESS
+    assert (
+        pipelines.get_pipeline_run("orders_daily", "r1").status
+        is PipelineRunStatus.SUCCESS
+    )
 
     handler.handle(failed)
     run2 = pipelines.get_pipeline_run("orders_daily", "r2")
@@ -347,8 +515,14 @@ def test_pipeline_events_update_pipeline_runs_and_keep_terminal_state():
 
 def test_unhandled_event_is_ignored():
     handler, datasets, pipelines, _, _, _ = make_handler()
-    handler.handle(SchemaChangedEvent(
-        dataset_id="orders", batch_id="b1", previous_version=1, new_version=2, detected_at=NOW,
-    ))
+    handler.handle(
+        SchemaChangedEvent(
+            dataset_id="orders",
+            batch_id="b1",
+            previous_version=1,
+            new_version=2,
+            detected_at=NOW,
+        )
+    )
     assert datasets.datasets == set()
     assert pipelines.runs == {}

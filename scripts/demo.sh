@@ -2,7 +2,7 @@
 # End-to-end demo: Olist tables -> ingestion -> S3 + Kafka -> PostgreSQL raw -> dbt -> quality decisions -> dashboard.
 #
 # Three normal monthly runs build the history, the fourth silently loses 60% of order_payments while every
-# pipeline step still succeeds. The quality bridge must catch it: BLOCK on the dashboard, and the revenue
+# pipeline step still succeeds. The quality bridge must catch it: WARN (row_count FAIL), and the revenue
 # built by dbt for that month is visibly too low.
 #
 # Needs only Docker. Real Olist CSVs in data/olist are used if present, otherwise a small synthetic set in
@@ -70,7 +70,7 @@ $PSQL < scripts/demo_postgres.sql
 cat <<EOF
 
 ================ Where to look ================
-  Dashboard (quality)  http://localhost:8000                 order_payments, last batch -> BLOCK
+  Dashboard (quality)  http://localhost:8000                 order_payments, last batch -> WARN (row_count FAIL)
   Airflow              http://localhost:8080                 admin / admin   (local demo only)
   Kafka UI             http://localhost:8081                 topics -> dataset.ingested
   PostgreSQL (Adminer) http://localhost:8082/?pgsql=postgres&username=reliability&db=reliability
