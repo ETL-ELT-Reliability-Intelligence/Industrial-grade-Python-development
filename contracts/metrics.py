@@ -10,7 +10,9 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from contracts.base import Contract, NonBlankText
 
-NonNegativeNumber = Annotated[int, Field(ge=0)] | Annotated[float, Field(ge=0, allow_inf_nan=False)]
+NonNegativeNumber = (
+    Annotated[int, Field(ge=0)] | Annotated[float, Field(ge=0, allow_inf_nan=False)]
+)
 
 
 class MetricKind(str, Enum):
@@ -19,10 +21,20 @@ class MetricKind(str, Enum):
     ROW_COUNT = "row_count"
     NULL_RATE = "null_rate"
     DISTINCT_COUNT = "distinct_count"
-    FRESHNESS_SECONDS = "freshness_seconds"
+    DISTINCT_RATIO = "distinct_ratio"
+    NON_NULL_COUNT = "non_null_count"
+    NULL_COUNT = "null_count"
 
 
-COLUMN_METRICS = frozenset({MetricKind.NULL_RATE, MetricKind.DISTINCT_COUNT})
+COLUMN_METRICS = frozenset(
+    {
+        MetricKind.NULL_RATE,
+        MetricKind.DISTINCT_COUNT,
+        MetricKind.DISTINCT_RATIO,
+        MetricKind.NON_NULL_COUNT,
+        MetricKind.NULL_COUNT,
+    }
+)
 
 
 class MetricPoint(Contract):
@@ -49,9 +61,17 @@ class MetricPoint(Contract):
         elif self.column is not None:
             raise ValueError(f"{self.metric.value} is a dataset-level metric")
         if self.value is not None:
-            if self.metric in (MetricKind.ROW_COUNT, MetricKind.DISTINCT_COUNT):
+            if self.metric in (
+                MetricKind.ROW_COUNT,
+                MetricKind.DISTINCT_COUNT,
+                MetricKind.NON_NULL_COUNT,
+                MetricKind.NULL_COUNT,
+            ):
                 if type(self.value) is not int:
                     raise ValueError("count metrics require an integer value")
-            elif self.metric is MetricKind.NULL_RATE and self.value > 1:
+            elif (
+                self.metric in (MetricKind.NULL_RATE, MetricKind.DISTINCT_RATIO)
+                and self.value > 1
+            ):
                 raise ValueError("null_rate must be in [0, 1]")
         return self

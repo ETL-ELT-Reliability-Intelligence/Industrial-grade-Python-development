@@ -8,19 +8,34 @@ from typing import Any
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
+from contracts.profiles import BatchProfile
 from contracts.metrics import MetricKind, MetricPoint
 from contracts.evaluation import Evaluation, CheckExecution
 from contracts.quality import (
-    CheckResult, QualityDecision, QualityStatus, SchemaField,
+    CheckResult,
+    QualityDecision,
+    QualityStatus,
+    SchemaField,
 )
 from contracts.state import Anomaly, Batch, PipelineRun, PipelineRunStatus, UserAction
 from storage.serialization import (
-    check_result_from_row, check_result_to_row, fields_from_json, fields_to_json,
-    reasons_from_json, reasons_to_json,
+    check_result_from_row,
+    check_result_to_row,
+    fields_from_json,
+    fields_to_json,
+    reasons_from_json,
+    reasons_to_json,
 )
 
 Conn = Connection[dict[str, Any]]
-_COUNT_METRICS = frozenset({MetricKind.ROW_COUNT, MetricKind.DISTINCT_COUNT})
+_COUNT_METRICS = frozenset(
+    {
+        MetricKind.ROW_COUNT,
+        MetricKind.DISTINCT_COUNT,
+        MetricKind.NULL_COUNT,
+        MetricKind.NON_NULL_COUNT,
+    }
+)
 
 
 def _limit(value: int) -> int:
@@ -56,8 +71,11 @@ class PostgresDatasetRepository(_PostgresRepository):
         self._ensure_dataset(dataset_id)
 
     def save_schema(
-        self, dataset_id: str, schema_version: int,
-        fields: tuple[SchemaField, ...], observed_at: datetime,
+        self,
+        dataset_id: str,
+        schema_version: int,
+        fields: tuple[SchemaField, ...],
+        observed_at: datetime,
     ) -> None:
         _aware(observed_at, "observed_at")
         with self._connection.transaction():
@@ -65,7 +83,12 @@ class PostgresDatasetRepository(_PostgresRepository):
             cursor = self._connection.execute(
                 "INSERT INTO dataset_schemas (dataset_id, schema_version, fields, observed_at) "
                 "VALUES (%s, %s, %s, %s) ON CONFLICT (dataset_id, schema_version) DO NOTHING",
-                (dataset_id, schema_version, Jsonb(fields_to_json(fields)), observed_at),
+                (
+                    dataset_id,
+                    schema_version,
+                    Jsonb(fields_to_json(fields)),
+                    observed_at,
+                ),
             )
             if cursor.rowcount == 0:
                 stored = self.get_schema(dataset_id, schema_version)
@@ -75,7 +98,9 @@ class PostgresDatasetRepository(_PostgresRepository):
                         "is already stored with different fields"
                     )
 
-    def get_schema(self, dataset_id: str, schema_version: int) -> tuple[SchemaField, ...] | None:
+    def get_schema(
+        self, dataset_id: str, schema_version: int
+    ) -> tuple[SchemaField, ...] | None:
         row = self._connection.execute(
             "SELECT fields FROM dataset_schemas WHERE dataset_id = %s AND schema_version = %s",
             (dataset_id, schema_version),
@@ -93,8 +118,14 @@ class PostgresDatasetRepository(_PostgresRepository):
                 "records = EXCLUDED.records, received_at = EXCLUDED.received_at, "
                 "schema_version = EXCLUDED.schema_version, "
                 "object_key = COALESCE(EXCLUDED.object_key, batches.object_key)",
-                (batch.dataset_id, batch.batch_id, batch.records, batch.received_at,
-                 batch.schema_version, batch.object_key),
+                (
+                    batch.dataset_id,
+                    batch.batch_id,
+                    batch.records,
+                    batch.received_at,
+                    batch.schema_version,
+                    batch.object_key,
+                ),
             )
 
     def get_batch(self, dataset_id: str, batch_id: str) -> Batch | None:
@@ -115,8 +146,11 @@ class PostgresDatasetRepository(_PostgresRepository):
 
 def _batch(row: dict[str, Any]) -> Batch:
     return Batch(
-        dataset_id=row["dataset_id"], batch_id=row["batch_id"], records=row["records"],
-        received_at=row["received_at"], schema_version=row["schema_version"],
+        dataset_id=row["dataset_id"],
+        batch_id=row["batch_id"],
+        records=row["records"],
+        received_at=row["received_at"],
+        schema_version=row["schema_version"],
         object_key=row["object_key"],
     )
 
@@ -132,8 +166,14 @@ class PostgresPipelineRunRepository(_PostgresRepository):
             "status = EXCLUDED.status, started_at = EXCLUDED.started_at, "
             "finished_at = EXCLUDED.finished_at, error = EXCLUDED.error "
             "WHERE pipeline_runs.status = 'running'",
-            (run.pipeline_id, run.run_id, run.status.value, run.started_at,
-             run.finished_at, run.error),
+            (
+                run.pipeline_id,
+                run.run_id,
+                run.status.value,
+                run.started_at,
+                run.finished_at,
+                run.error,
+            ),
         )
 
     def get_pipeline_run(self, pipeline_id: str, run_id: str) -> PipelineRun | None:
@@ -143,7 +183,9 @@ class PostgresPipelineRunRepository(_PostgresRepository):
         ).fetchone()
         return None if row is None else _pipeline_run(row)
 
-    def list_pipeline_runs(self, pipeline_id: str, limit: int = 100) -> list[PipelineRun]:
+    def list_pipeline_runs(
+        self, pipeline_id: str, limit: int = 100
+    ) -> list[PipelineRun]:
         rows = self._connection.execute(
             "SELECT * FROM pipeline_runs WHERE pipeline_id = %s "
             "ORDER BY started_at DESC, run_id DESC LIMIT %s",
@@ -154,14 +196,46 @@ class PostgresPipelineRunRepository(_PostgresRepository):
 
 def _pipeline_run(row: dict[str, Any]) -> PipelineRun:
     return PipelineRun(
-        pipeline_id=row["pipeline_id"], run_id=row["run_id"],
-        status=PipelineRunStatus(row["status"]), started_at=row["started_at"],
-        finished_at=row["finished_at"], error=row["error"],
+        pipeline_id=row["pipeline_id"],
+        run_id=row["run_id"],
+        status=PipelineRunStatus(row["status"]),
+        started_at=row["started_at"],
+        finished_at=row["finished_at"],
+        error=row["error"],
     )
 
 
 class PostgresMetricRepository(_PostgresRepository):
     """Dataset statistics."""
+
+    def save_profile(self, profile: BatchProfile) -> None:
+        self._ensure_dataset(profile.event.dataset_id)
+        self._connection.execute(
+            "INSERT INTO dataset_profiles (dataset_id, scope_id, profile) VALUES (%s, %s, %s) "
+            "ON CONFLICT (dataset_id, scope_id) DO UPDATE SET profile = EXCLUDED.profile",
+            (
+                profile.event.dataset_id,
+                profile.event.batch_id,
+                Jsonb(profile.model_dump(mode="json")),
+            ),
+        )
+
+    def list_profiles(self, dataset_id: str) -> list[BatchProfile]:
+        rows = self._connection.execute(
+            "SELECT profile FROM dataset_profiles WHERE dataset_id = %s", (dataset_id,)
+        ).fetchall()
+        return [
+            BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows
+        ]
+
+    def set_profile_eligible(
+        self, dataset_id: str, scope_id: str, eligible: bool
+    ) -> None:
+        self._connection.execute(
+            "UPDATE dataset_profiles SET profile = jsonb_set(profile, '{eligible}', %s) "
+            "WHERE dataset_id = %s AND scope_id = %s",
+            (Jsonb(eligible), dataset_id, scope_id),
+        )
 
     def save_metric(self, point: MetricPoint) -> None:
         with self._connection.transaction():
@@ -173,13 +247,23 @@ class PostgresMetricRepository(_PostgresRepository):
                 "ON CONFLICT (dataset_id, scope_id, metric, (COALESCE(column_name, '')), "
                 "stats_version) DO UPDATE SET value = EXCLUDED.value, "
                 "observed_at = EXCLUDED.observed_at, recorded_at = now()",
-                (point.dataset_id, point.scope_id, point.metric.value, point.column,
-                 point.value, point.observed_at, point.stats_version),
+                (
+                    point.dataset_id,
+                    point.scope_id,
+                    point.metric.value,
+                    point.column,
+                    point.value,
+                    point.observed_at,
+                    point.stats_version,
+                ),
             )
 
     def list_metric_history(
-        self, dataset_id: str, metric: MetricKind,
-        column: str | None = None, limit: int = 100,
+        self,
+        dataset_id: str,
+        metric: MetricKind,
+        column: str | None = None,
+        limit: int = 100,
     ) -> list[MetricPoint]:
         rows = self._connection.execute(
             "SELECT * FROM dataset_metrics WHERE dataset_id = %s AND metric = %s "
@@ -196,9 +280,13 @@ def _metric(row: dict[str, Any]) -> MetricPoint:
     if value is not None and metric in _COUNT_METRICS:
         value = int(value)
     return MetricPoint(
-        dataset_id=row["dataset_id"], scope_id=row["scope_id"], metric=metric,
-        observed_at=row["observed_at"], stats_version=row["stats_version"],
-        value=value, column=row["column_name"],
+        dataset_id=row["dataset_id"],
+        scope_id=row["scope_id"],
+        metric=metric,
+        observed_at=row["observed_at"],
+        stats_version=row["stats_version"],
+        value=value,
+        column=row["column_name"],
     )
 
 
@@ -208,20 +296,32 @@ class PostgresQualityRepository(_PostgresRepository):
     @contextmanager
     def evaluation_lock(self, dataset_id: str, scope_id: str):
         key = json.dumps([dataset_id, scope_id])
-        self._connection.execute("SELECT pg_advisory_lock(hashtextextended(%s, 0))", (key,))
+        self._connection.execute(
+            "SELECT pg_advisory_lock(hashtextextended(%s, 0))", (key,)
+        )
         try:
             yield
         finally:
-            self._connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
+            self._connection.execute(
+                "SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,)
+            )
 
     def get_evaluation(self, evaluation_id: str) -> Evaluation | None:
-        row = self._connection.execute("SELECT snapshot FROM quality_evaluations WHERE evaluation_id = %s", (evaluation_id,)).fetchone()
+        row = self._connection.execute(
+            "SELECT snapshot FROM quality_evaluations WHERE evaluation_id = %s",
+            (evaluation_id,),
+        ).fetchone()
         if row is None:
             return None
         payload = row["snapshot"]
-        records = self._connection.execute("SELECT check_id, snapshot FROM quality_executions WHERE evaluation_id = %s", (evaluation_id,)).fetchall()
+        records = self._connection.execute(
+            "SELECT check_id, snapshot FROM quality_executions WHERE evaluation_id = %s",
+            (evaluation_id,),
+        ).fetchall()
         executions = {r["check_id"]: r["snapshot"] for r in records}
-        payload["checks"] = [executions.get(c["check_id"], c) for c in payload["checks"]]
+        payload["checks"] = [
+            executions.get(c["check_id"], c) for c in payload["checks"]
+        ]
         return Evaluation.model_validate_json(json.dumps(payload))
 
     def save_execution(self, evaluation_id: str, execution: CheckExecution) -> None:
@@ -234,21 +334,44 @@ class PostgresQualityRepository(_PostgresRepository):
         if row is None or row["decision"] is not None:
             raise ValueError("unknown or completed evaluation")
         previous = CheckExecution.model_validate_json(json.dumps(row["execution"]))
-        if previous.spec != execution.spec or previous.observation != execution.observation or previous.constraint != execution.constraint:
+        if (
+            previous.spec != execution.spec
+            or previous.observation != execution.observation
+            or previous.constraint != execution.constraint
+        ):
             raise ValueError("execution differs from frozen plan")
         if previous.result is not None and previous != execution:
             raise ValueError("completed check is immutable")
-        self._connection.execute("UPDATE quality_executions SET snapshot = %s WHERE evaluation_id = %s AND check_id = %s",
-                                 (Jsonb(execution.model_dump(mode="json")), evaluation_id, execution.check_id))
+        self._connection.execute(
+            "UPDATE quality_executions SET snapshot = %s WHERE evaluation_id = %s AND check_id = %s",
+            (
+                Jsonb(execution.model_dump(mode="json")),
+                evaluation_id,
+                execution.check_id,
+            ),
+        )
 
     def save_evaluation(self, evaluation: Evaluation) -> None:
         # Validate even snapshots assembled with model_copy by the runner.
         evaluation = Evaluation.model_validate_json(evaluation.model_dump_json())
         existing = self.get_evaluation(evaluation.evaluation_id)
         if existing is not None:
-            if (existing.suite, existing.event, existing.evaluated_at) != (evaluation.suite, evaluation.event, evaluation.evaluated_at):
+            if (existing.suite, existing.event, existing.evaluated_at) != (
+                evaluation.suite,
+                evaluation.event,
+                evaluation.evaluated_at,
+            ):
                 raise ValueError("an evaluation plan is immutable")
-            if existing.decision is not None and existing.model_copy(update={"published": evaluation.published, "delivery_attempts": evaluation.delivery_attempts}) != evaluation:
+            if (
+                existing.decision is not None
+                and existing.model_copy(
+                    update={
+                        "published": evaluation.published,
+                        "delivery_attempts": evaluation.delivery_attempts,
+                    }
+                )
+                != evaluation
+            ):
                 raise ValueError("a completed evaluation is immutable")
         with self._connection.transaction():
             self._ensure_dataset(evaluation.event.dataset_id)
@@ -256,19 +379,36 @@ class PostgresQualityRepository(_PostgresRepository):
                 "INSERT INTO quality_evaluations (evaluation_id, dataset_id, scope_id, snapshot) "
                 "VALUES (%s, %s, %s, %s) ON CONFLICT (evaluation_id) DO UPDATE "
                 "SET snapshot = EXCLUDED.snapshot, updated_at = now()",
-                (evaluation.evaluation_id, evaluation.event.dataset_id, evaluation.event.batch_id,
-                 Jsonb(evaluation.model_dump(mode="json"))),
+                (
+                    evaluation.evaluation_id,
+                    evaluation.event.dataset_id,
+                    evaluation.event.batch_id,
+                    Jsonb(evaluation.model_dump(mode="json")),
+                ),
             )
             if existing is None or not existing.prepared:
                 with self._connection.cursor() as cursor:
                     cursor.executemany(
                         "INSERT INTO quality_executions (evaluation_id, check_id, snapshot) VALUES (%s, %s, %s) "
                         "ON CONFLICT (evaluation_id, check_id) DO UPDATE SET snapshot = EXCLUDED.snapshot",
-                        [(evaluation.evaluation_id, c.check_id, Jsonb(c.model_dump(mode="json"))) for c in evaluation.checks],
+                        [
+                            (
+                                evaluation.evaluation_id,
+                                c.check_id,
+                                Jsonb(c.model_dump(mode="json")),
+                            )
+                            for c in evaluation.checks
+                        ],
                     )
             if existing is None:
-                self._connection.execute("DELETE FROM quality_decisions WHERE dataset_id = %s AND scope_id = %s", (evaluation.event.dataset_id, evaluation.event.batch_id))
-                self._connection.execute("DELETE FROM quality_check_results WHERE dataset_id = %s AND scope_id = %s", (evaluation.event.dataset_id, evaluation.event.batch_id))
+                self._connection.execute(
+                    "DELETE FROM quality_decisions WHERE dataset_id = %s AND scope_id = %s",
+                    (evaluation.event.dataset_id, evaluation.event.batch_id),
+                )
+                self._connection.execute(
+                    "DELETE FROM quality_check_results WHERE dataset_id = %s AND scope_id = %s",
+                    (evaluation.event.dataset_id, evaluation.event.batch_id),
+                )
 
     def list_evaluations(self, dataset_id: str, scope_id: str) -> list[Evaluation]:
         rows = self._connection.execute(
@@ -283,14 +423,25 @@ class PostgresQualityRepository(_PostgresRepository):
             "SELECT evaluation_id FROM quality_evaluations WHERE dataset_id = %s AND scope_id = %s ORDER BY sequence DESC LIMIT 1",
             (event.dataset_id, event.batch_id),
         ).fetchone()
-        if latest["evaluation_id"] != evaluation.evaluation_id or evaluation.decision is None:
+        if (
+            latest["evaluation_id"] != evaluation.evaluation_id
+            or evaluation.decision is None
+        ):
             return
         with self._connection.transaction():
-            self._connection.execute("DELETE FROM quality_check_results WHERE dataset_id = %s AND scope_id = %s", (event.dataset_id, event.batch_id))
+            self._connection.execute(
+                "DELETE FROM quality_check_results WHERE dataset_id = %s AND scope_id = %s",
+                (event.dataset_id, event.batch_id),
+            )
             for check in evaluation.checks:
                 if check.result is not None:
                     self.save_check_result(check.result)
-            self.save_quality_decision(event.dataset_id, event.batch_id, evaluation.decision, evaluation.evaluated_at)
+            self.save_quality_decision(
+                event.dataset_id,
+                event.batch_id,
+                evaluation.decision,
+                evaluation.evaluated_at,
+            )
 
     def save_check_result(self, result: CheckResult) -> None:
         row = check_result_to_row(result)
@@ -325,7 +476,11 @@ class PostgresQualityRepository(_PostgresRepository):
         return [check_result_from_row(row) for row in rows]
 
     def save_quality_decision(
-        self, dataset_id: str, scope_id: str, decision: QualityDecision, decided_at: datetime,
+        self,
+        dataset_id: str,
+        scope_id: str,
+        decision: QualityDecision,
+        decided_at: datetime,
     ) -> None:
         _aware(decided_at, "decided_at")
         with self._connection.transaction():
@@ -336,18 +491,28 @@ class PostgresQualityRepository(_PostgresRepository):
                 "ON CONFLICT (dataset_id, scope_id) DO UPDATE SET "
                 "status = EXCLUDED.status, reasons = EXCLUDED.reasons, "
                 "decided_at = EXCLUDED.decided_at",
-                (dataset_id, scope_id, decision.status.value,
-                 Jsonb(reasons_to_json(decision.reasons)), decided_at),
+                (
+                    dataset_id,
+                    scope_id,
+                    decision.status.value,
+                    Jsonb(reasons_to_json(decision.reasons)),
+                    decided_at,
+                ),
             )
 
-    def get_quality_decision(self, dataset_id: str, scope_id: str) -> QualityDecision | None:
+    def get_quality_decision(
+        self, dataset_id: str, scope_id: str
+    ) -> QualityDecision | None:
         row = self._connection.execute(
             "SELECT status, reasons FROM quality_decisions WHERE dataset_id = %s AND scope_id = %s",
             (dataset_id, scope_id),
         ).fetchone()
         if row is None:
             return None
-        return QualityDecision(status=QualityStatus(row["status"]), reasons=reasons_from_json(row["reasons"]))
+        return QualityDecision(
+            status=QualityStatus(row["status"]),
+            reasons=reasons_from_json(row["reasons"]),
+        )
 
 
 class PostgresAnomalyRepository(_PostgresRepository):
@@ -361,18 +526,30 @@ class PostgresAnomalyRepository(_PostgresRepository):
                 "actual, score, detector, model_version, detected_at) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (anomaly_id) DO NOTHING",
-                (anomaly.anomaly_id, anomaly.dataset_id, anomaly.batch_id, anomaly.metric,
-                 anomaly.expected, anomaly.actual, anomaly.score, anomaly.detector,
-                 anomaly.model_version, anomaly.detected_at),
+                (
+                    anomaly.anomaly_id,
+                    anomaly.dataset_id,
+                    anomaly.batch_id,
+                    anomaly.metric,
+                    anomaly.expected,
+                    anomaly.actual,
+                    anomaly.score,
+                    anomaly.detector,
+                    anomaly.model_version,
+                    anomaly.detected_at,
+                ),
             )
 
     def get_anomaly(self, anomaly_id: str) -> Anomaly | None:
         row = self._connection.execute(
-            "SELECT * FROM anomalies WHERE anomaly_id = %s", (anomaly_id,),
+            "SELECT * FROM anomalies WHERE anomaly_id = %s",
+            (anomaly_id,),
         ).fetchone()
         return None if row is None else _anomaly(row)
 
-    def list_anomalies(self, dataset_id: str | None = None, limit: int = 100) -> list[Anomaly]:
+    def list_anomalies(
+        self, dataset_id: str | None = None, limit: int = 100
+    ) -> list[Anomaly]:
         rows = self._connection.execute(
             "SELECT * FROM anomalies WHERE (%s::text IS NULL OR dataset_id = %s::text) "
             "ORDER BY detected_at DESC, anomaly_id LIMIT %s",
@@ -383,10 +560,16 @@ class PostgresAnomalyRepository(_PostgresRepository):
 
 def _anomaly(row: dict[str, Any]) -> Anomaly:
     return Anomaly(
-        anomaly_id=row["anomaly_id"], dataset_id=row["dataset_id"], metric=row["metric"],
-        expected=row["expected"], actual=row["actual"], score=row["score"],
-        detector=row["detector"], detected_at=row["detected_at"],
-        batch_id=row["batch_id"], model_version=row["model_version"],
+        anomaly_id=row["anomaly_id"],
+        dataset_id=row["dataset_id"],
+        metric=row["metric"],
+        expected=row["expected"],
+        actual=row["actual"],
+        score=row["score"],
+        detector=row["detector"],
+        detected_at=row["detected_at"],
+        batch_id=row["batch_id"],
+        model_version=row["model_version"],
     )
 
 
@@ -398,11 +581,20 @@ class PostgresUserActionRepository(_PostgresRepository):
             "INSERT INTO user_actions (action_id, actor, action_type, target_type, target_id, "
             "performed_at, details) VALUES (%s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (action_id) DO NOTHING",
-            (action.action_id, action.actor, action.action_type, action.target_type,
-             action.target_id, action.performed_at, Jsonb(action.details)),
+            (
+                action.action_id,
+                action.actor,
+                action.action_type,
+                action.target_type,
+                action.target_id,
+                action.performed_at,
+                Jsonb(action.details),
+            ),
         )
 
-    def list_actions(self, target_type: str, target_id: str, limit: int = 100) -> list[UserAction]:
+    def list_actions(
+        self, target_type: str, target_id: str, limit: int = 100
+    ) -> list[UserAction]:
         rows = self._connection.execute(
             "SELECT * FROM user_actions WHERE target_type = %s AND target_id = %s "
             "ORDER BY performed_at DESC, action_id LIMIT %s",
@@ -410,9 +602,13 @@ class PostgresUserActionRepository(_PostgresRepository):
         ).fetchall()
         return [
             UserAction(
-                action_id=row["action_id"], actor=row["actor"], action_type=row["action_type"],
-                target_type=row["target_type"], target_id=row["target_id"],
-                performed_at=row["performed_at"], details=row["details"],
+                action_id=row["action_id"],
+                actor=row["actor"],
+                action_type=row["action_type"],
+                target_type=row["target_type"],
+                target_id=row["target_id"],
+                performed_at=row["performed_at"],
+                details=row["details"],
             )
             for row in rows
         ]

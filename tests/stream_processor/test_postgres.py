@@ -14,6 +14,7 @@ from contracts.events import (
     PipelineFinishedEvent,
     PipelineStartedEvent,
 )
+from contracts.quality_config import CheckSuite
 from contracts.metrics import MetricKind
 from contracts.quality import CheckStatus, QualityStatus
 from contracts.state import PipelineRunStatus
@@ -55,6 +56,19 @@ class StreamProcessorPostgresTests(DatabaseTestCase):
             self.metrics,
             self.quality,
             publisher=self.publisher,
+            suites={
+                "orders": CheckSuite.model_validate_json(
+                    json.dumps(
+                        {
+                            "dataset_id": "orders",
+                            "checks": [
+                                {"key": "schema", "kind": "schema"},
+                                {"key": "row_count", "kind": "row_count"},
+                            ],
+                        }
+                    )
+                )
+            },
             clock=lambda: NOW + 10 * MINUTE,
         )
         self.client = TestClient(
@@ -69,35 +83,41 @@ class StreamProcessorPostgresTests(DatabaseTestCase):
             rows_normal = [{"order_id": i, "amount": 10.5 * (i + 1)} for i in range(10)]
             for idx in range(1, 4):
                 uri = _write_jsonl(root, f"b-{idx}", rows_normal)
-                self.handler.handle(DatasetIngestedEvent(
-                    dataset_id="orders",
-                    batch_id=f"b-{idx}",
-                    records=10,
-                    received_at=NOW + idx * MINUTE,
-                    schema_version=1,
-                    raw_uri=uri,
-                ))
+                self.handler.handle(
+                    DatasetIngestedEvent(
+                        dataset_id="orders",
+                        batch_id=f"b-{idx}",
+                        records=10,
+                        received_at=NOW + idx * MINUTE,
+                        schema_version=1,
+                        raw_uri=uri,
+                    )
+                )
 
             # Repeat b-3 to verify idempotency on real PostgreSQL tables
-            self.handler.handle(DatasetIngestedEvent(
-                dataset_id="orders",
-                batch_id="b-3",
-                records=10,
-                received_at=NOW + 3 * MINUTE,
-                schema_version=1,
-                raw_uri=_write_jsonl(root, "b-3", rows_normal),
-            ))
+            self.handler.handle(
+                DatasetIngestedEvent(
+                    dataset_id="orders",
+                    batch_id="b-3",
+                    records=10,
+                    received_at=NOW + 3 * MINUTE,
+                    schema_version=1,
+                    raw_uri=_write_jsonl(root, "b-3", rows_normal),
+                )
+            )
 
             # Fourth batch drops volume -> row_count FAIL and policy BLOCK
             uri_drop = _write_jsonl(root, "b-4", rows_normal[:3])
-            self.handler.handle(DatasetIngestedEvent(
-                dataset_id="orders",
-                batch_id="b-4",
-                records=3,
-                received_at=NOW + 4 * MINUTE,
-                schema_version=1,
-                raw_uri=uri_drop,
-            ))
+            self.handler.handle(
+                DatasetIngestedEvent(
+                    dataset_id="orders",
+                    batch_id="b-4",
+                    records=3,
+                    received_at=NOW + 4 * MINUTE,
+                    schema_version=1,
+                    raw_uri=uri_drop,
+                )
+            )
 
         batches = self.datasets.list_batches("orders")
         self.assertEqual([b.batch_id for b in batches], ["b-4", "b-3", "b-2", "b-1"])
@@ -106,7 +126,9 @@ class StreamProcessorPostgresTests(DatabaseTestCase):
         history = self.metrics.list_metric_history("orders", MetricKind.ROW_COUNT)
         self.assertEqual([p.value for p in history], [3, 10, 10, 10])
 
-        results_b4 = {r.check_id: r for r in self.quality.list_check_results("orders", "b-4")}
+        results_b4 = {
+            r.check_id: r for r in self.quality.list_check_results("orders", "b-4")
+        }
         self.assertEqual(results_b4["orders.row_count"].status, CheckStatus.FAIL)
         self.assertEqual(
             self.quality.get_quality_decision("orders", "b-4").status,
@@ -117,13 +139,19 @@ class StreamProcessorPostgresTests(DatabaseTestCase):
 
         # Verify backend endpoints reflect stream-processed records without seed
         api_batches = self.client.get("/api/v1/datasets/orders/batches").json()["items"]
-        self.assertEqual([item["batch_id"] for item in api_batches], ["b-4", "b-3", "b-2", "b-1"])
-        api_quality = self.client.get("/api/v1/datasets/orders/quality?scope_id=b-4").json()
+        self.assertEqual(
+            [item["batch_id"] for item in api_batches], ["b-4", "b-3", "b-2", "b-1"]
+        )
+        api_quality = self.client.get(
+            "/api/v1/datasets/orders/quality?scope_id=b-4"
+        ).json()
         self.assertEqual(api_quality["decision"]["status"], "BLOCK")
 
     def test_pipeline_events_round_trip_in_postgres(self):
         self.handler.handle(
-            PipelineStartedEvent(pipeline_id="orders_daily", run_id="run-1", started_at=NOW)
+            PipelineStartedEvent(
+                pipeline_id="orders_daily", run_id="run-1", started_at=NOW
+            )
         )
         self.handler.handle(
             PipelineFinishedEvent(

@@ -1,8 +1,4 @@
 checks:
-  freshness:
-    kind: freshness
-    params:
-      max_age_seconds: 3600
   schema:
     kind: schema
     on_missing_schema: WARN
@@ -12,6 +8,8 @@ checks:
       mode: historical
       history_window: 10
       min_history: 3
-      min_ratio: 0.5
-      max_ratio: 2.0
+      mad_multiplier: 3.0
+      relative_tolerance: 0.2
+      absolute_tolerance: 1
+    on_fail: WARN
     on_insufficient_history: WARN

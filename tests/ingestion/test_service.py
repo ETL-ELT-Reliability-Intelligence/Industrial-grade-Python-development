@@ -14,7 +14,7 @@ NOW = datetime(2026, 9, 26, 10, 1, tzinfo=timezone.utc)
 
 
 class FixedSource:
-    dataset_id = "orders"
+    dataset_id = "mock_orders"
 
     def __init__(self, records):
         self._records = records
@@ -36,7 +36,7 @@ def service(tmp_path, publisher):
 def test_ingest_publishes_dataset_ingested(service, publisher):
     event = service.ingest(MockApiSource(base_rows=100))
 
-    assert event.dataset_id == "orders"
+    assert event.dataset_id == "mock_orders"
     assert event.batch_id == "2026-09-26-001"
     assert event.records == 100
     assert event.received_at == NOW
@@ -54,7 +54,7 @@ def test_batch_ids_increment_within_a_day(service):
 
 def test_raw_data_is_saved(service, tmp_path):
     service.ingest(MockApiSource(base_rows=7))
-    lines = (tmp_path / "orders" / "2026-09-26-001.jsonl").read_text().splitlines()
+    lines = (tmp_path / "mock_orders" / "2026-09-26-001.jsonl").read_text().splitlines()
     assert len(lines) == 7
 
 
@@ -94,7 +94,7 @@ def test_event_json_roundtrip(service):
     assert isinstance(parsed, DatasetIngestedEvent)
     assert parsed == event
     assert event.topic == "dataset.ingested"
-    assert event.key == "orders"
+    assert event.key == "mock_orders"
 
 
 class FlakyPublisher(InMemoryPublisher):
@@ -116,12 +116,16 @@ def test_retry_of_same_run_does_not_create_second_batch(tmp_path):
     service = IngestionService(LocalRawStore(tmp_path), publisher, clock=lambda: NOW)
 
     with pytest.raises(RuntimeError):
-        service.ingest(MockApiSource(base_rows=5), run_id="scheduled__2026-09-26T10:00:00+00:00")
-    event = service.ingest(MockApiSource(base_rows=5), run_id="scheduled__2026-09-26T10:00:00+00:00")
+        service.ingest(
+            MockApiSource(base_rows=5), run_id="scheduled__2026-09-26T10:00:00+00:00"
+        )
+    event = service.ingest(
+        MockApiSource(base_rows=5), run_id="scheduled__2026-09-26T10:00:00+00:00"
+    )
 
     assert event.batch_id == "2026-09-26-001"
     assert publisher.events == [event]
-    assert len(list((tmp_path / "orders").glob("*.jsonl"))) == 1
+    assert len(list((tmp_path / "mock_orders").glob("*.jsonl"))) == 1
 
 
 def test_retry_republishes_schema_change_too(tmp_path):
@@ -133,7 +137,10 @@ def test_retry_republishes_schema_change_too(tmp_path):
 
     service.ingest(FixedSource([{"id": 1, "extra": 1}]), run_id="r2")
 
-    assert [type(e) for e in publisher.events] == [SchemaChangedEvent, DatasetIngestedEvent]
+    assert [type(e) for e in publisher.events] == [
+        SchemaChangedEvent,
+        DatasetIngestedEvent,
+    ]
 
 
 def test_republished_events_share_dedup_keys(tmp_path):
@@ -144,11 +151,17 @@ def test_republished_events_share_dedup_keys(tmp_path):
 
     first, second = publisher.events
     assert first == second
-    assert first.dedup_key == second.dedup_key == "dataset.ingested:orders:2026-09-26-001"
+    assert (
+        first.dedup_key
+        == second.dedup_key
+        == "dataset.ingested:mock_orders:2026-09-26-001"
+    )
 
 
 def test_different_runs_get_different_batches(tmp_path):
-    service = IngestionService(LocalRawStore(tmp_path), InMemoryPublisher(), clock=lambda: NOW)
+    service = IngestionService(
+        LocalRawStore(tmp_path), InMemoryPublisher(), clock=lambda: NOW
+    )
     a = service.ingest(MockApiSource(base_rows=5), run_id="r1")
     b = service.ingest(MockApiSource(base_rows=5), run_id="r2")
     assert a.batch_id != b.batch_id

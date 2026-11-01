@@ -14,11 +14,11 @@ def config_tree(tmp_path):
         "policy:\n  on_fail: BLOCK\n  on_unknown: WARN\n", encoding="utf-8"
     )
     (tmp_path / "profiles/base.yaml").write_text(
-        "checks:\n  age:\n    kind: freshness\n    params:\n      max_age_seconds: 60\n",
+        "checks:\n  age:\n    kind: row_count\n    params:\n      mode: fixed\n      min_count: 0\n      absolute_tolerance: 60\n",
         encoding="utf-8",
     )
     (tmp_path / "datasets/orders.yaml").write_text(
-        "dataset_id: orders\nprofile: base\noverrides:\n  age:\n    params:\n      max_age_seconds: 120\n",
+        "dataset_id: orders\nprofile: base\noverrides:\n  age:\n    params:\n      absolute_tolerance: 120\n",
         encoding="utf-8",
     )
     return tmp_path
@@ -30,8 +30,8 @@ def test_profiles_do_not_share_mutable_overrides(tmp_path):
         "dataset_id: customers\nprofile: base\n", encoding="utf-8"
     )
     suites = load_suites(root)
-    assert suites["orders"].checks[0].params["max_age_seconds"] == 120
-    assert suites["customers"].checks[0].params["max_age_seconds"] == 60
+    assert suites["orders"].checks[0].params["absolute_tolerance"] == 120
+    assert suites["customers"].checks[0].params["absolute_tolerance"] == 60
     assert suites["orders"].fingerprint != suites["customers"].fingerprint
 
 
@@ -39,7 +39,7 @@ def test_profiles_do_not_share_mutable_overrides(tmp_path):
     "content",
     [
         "dataset_id: orders\nprofile: base\noverrides:\n  typo: {}\n",
-        "dataset_id: orders\nprofile: base\nchecks:\n  age:\n    kind: freshness\n",
+        "dataset_id: orders\nprofile: base\nchecks:\n  age:\n    kind: row_count\n",
         "dataset_id: orders\nprofile: ../base\n",
         "dataset_id: orders\ndataset_id: duplicate\nprofile: base\n",
         "dataset_id: orders\nprofile: base\noverrides:\n  age:\n    params:\n      unknown: 1\n",
@@ -114,10 +114,10 @@ def test_default_profile_works_without_dataset_files(tmp_path, directory_exists)
     customers = suites.get("customers")
     assert orders.dataset_id == "orders"
     assert customers.dataset_id == "customers"
-    assert orders.checks[0].params["max_age_seconds"] == 60
+    assert orders.checks[0].params["absolute_tolerance"] == 60
     assert orders.fingerprint != customers.fingerprint
-    orders.checks[0].params["max_age_seconds"] = 999
-    assert suites.get("orders").checks[0].params["max_age_seconds"] == 60
+    orders.checks[0].params["absolute_tolerance"] = 999
+    assert suites.get("orders").checks[0].params["absolute_tolerance"] == 60
 
 
 def test_dataset_override_takes_priority_over_fallback(tmp_path):
@@ -129,8 +129,8 @@ def test_dataset_override_takes_priority_over_fallback(tmp_path):
         encoding="utf-8",
     )
     suites = load_suites(root)
-    assert suites["orders"].checks[0].params["max_age_seconds"] == 120
-    assert suites["new_table"].checks[0].params["max_age_seconds"] == 60
+    assert suites["orders"].checks[0].params["absolute_tolerance"] == 120
+    assert suites["new_table"].checks[0].params["absolute_tolerance"] == 60
 
 
 def test_bad_dataset_configuration_does_not_fall_back_silently(tmp_path):

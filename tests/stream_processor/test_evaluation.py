@@ -28,7 +28,7 @@ def suite(minimum=1):
                         "key": "id",
                         "kind": "null_rate",
                         "column": "id",
-                        "params": {"max_null_rate": 0},
+                        "params": {"mode": "fixed", "max_null_rate": 0},
                     },
                 ],
             }
@@ -190,14 +190,25 @@ def test_finalizer_rejects_foreign_duplicate_and_pending_results(tmp_path):
         finalize(result.suite, "b1", (result.checks[0], pending))
 
 
-def test_same_batch_with_different_metadata_is_rejected(tmp_path):
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"received_at": NOW + timedelta(hours=1)},
+        {"source_id": "different"},
+        {"complete": False},
+        {
+            "period_start": NOW,
+            "period_end": NOW + timedelta(hours=1),
+            "granularity": "hour",
+        },
+    ],
+)
+def test_same_batch_with_different_metadata_is_rejected(tmp_path, changes):
     handler, _, _, _, _, _ = make_handler(suites={"orders": suite()})
     event = event_for(tmp_path)
     handler.handle_dataset_ingested(event)
     with pytest.raises(ValueError, match="metadata"):
-        handler.handle_dataset_ingested(
-            event.model_copy(update={"received_at": NOW + timedelta(hours=1)})
-        )
+        handler.handle_dataset_ingested(event.model_copy(update=changes))
 
 
 def test_error_classifier_does_not_retry_bad_input_or_missing_file():

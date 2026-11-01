@@ -79,20 +79,8 @@ class EvaluationRunner:
                     ),
                 )
                 self.repository.save_evaluation(evaluation)
-            elif (
-                evaluation.event.dataset_id,
-                evaluation.event.batch_id,
-                evaluation.event.raw_uri,
-                evaluation.event.received_at,
-                evaluation.event.schema_version,
-                evaluation.event.records,
-            ) != (
-                event.dataset_id,
-                event.batch_id,
-                event.raw_uri,
-                event.received_at,
-                event.schema_version,
-                event.records,
+            elif evaluation.event.model_dump(exclude={"event_id"}) != event.model_dump(
+                exclude={"event_id"}
             ):
                 raise ValueError(
                     "the same batch identity was delivered with different metadata"

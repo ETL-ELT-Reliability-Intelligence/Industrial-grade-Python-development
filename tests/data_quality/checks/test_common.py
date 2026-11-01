@@ -1,10 +1,20 @@
 """Verify behavior shared by all deterministic checks."""
 
-from datetime import datetime, timedelta, timezone
 import unittest
-from contracts.quality import CheckKind, CheckStatus, FreshnessConstraint, FreshnessObservation, NullRateConstraint, NullRateObservation, QualityContext, RowCountConstraint, RowCountObservation, SchemaConstraint, SchemaObservation
-from data_quality.checks import check_freshness, check_null_rate, check_row_count, check_schema
+from contracts.quality import (
+    CheckKind,
+    CheckStatus,
+    NullRateConstraint,
+    NullRateObservation,
+    QualityContext,
+    RowCountConstraint,
+    RowCountObservation,
+    SchemaConstraint,
+    SchemaObservation,
+)
+from data_quality.checks import check_null_rate, check_row_count, check_schema
 from data_quality.execution import REGISTRY
+from contracts.quality import ScalarObservation, ScalarConstraint
 
 
 class CommonCheckTests(unittest.TestCase):
@@ -12,21 +22,46 @@ class CommonCheckTests(unittest.TestCase):
 
     def test_missing_observations_and_preserved_evidence(self):
         """Return UNKNOWN consistently and preserve all caller-supplied evidence."""
-        now = datetime(2026, 10, 4, tzinfo=timezone.utc)
         context = QualityContext(dataset_id="orders", scope_id="window-42")
         covered = set()
         for check, kind, observation, constraint in (
-            (check_freshness, CheckKind.FRESHNESS, FreshnessObservation(last_updated_at=None, evaluated_at=now),
-             FreshnessConstraint(max_age=timedelta(hours=1))),
-            (check_null_rate, CheckKind.NULL_RATE, NullRateObservation(null_rate=None),
-             NullRateConstraint(max_null_rate=0.1)),
-            (check_row_count, CheckKind.ROW_COUNT, RowCountObservation(row_count=None),
-             RowCountConstraint(min_count=1)),
-            (check_schema, CheckKind.SCHEMA, SchemaObservation(fields=None), SchemaConstraint(fields=())),
+            *(
+                (
+                    REGISTRY[kind],
+                    kind,
+                    ScalarObservation(value=None),
+                    ScalarConstraint(maximum=1.0),
+                )
+                for kind in (
+                    CheckKind.CARDINALITY,
+                    CheckKind.DISTRIBUTION,
+                    CheckKind.VALUE_RULE,
+                )
+            ),
+            (
+                check_null_rate,
+                CheckKind.NULL_RATE,
+                NullRateObservation(null_rate=None),
+                NullRateConstraint(max_null_rate=0.1),
+            ),
+            (
+                check_row_count,
+                CheckKind.ROW_COUNT,
+                RowCountObservation(row_count=None),
+                RowCountConstraint(min_count=1),
+            ),
+            (
+                check_schema,
+                CheckKind.SCHEMA,
+                SchemaObservation(fields=None),
+                SchemaConstraint(fields=()),
+            ),
         ):
             covered.add(kind)
             with self.subTest(kind=kind):
-                result = check(observation, constraint, check_id="rule", context=context)
+                result = check(
+                    observation, constraint, check_id="rule", context=context
+                )
                 self.assertIs(result.status, CheckStatus.UNKNOWN)
                 self.assertEqual(result.reason_code, "missing_observation")
                 self.assertIs(result.kind, kind)
@@ -34,7 +69,13 @@ class CommonCheckTests(unittest.TestCase):
                 self.assertIs(result.constraint, constraint)
                 self.assertIs(result.context, context)
                 self.assertEqual(result.check_id, "rule")
-                self.assertEqual(type(result).model_validate_json(result.model_dump_json()), result)
-                self.assertEqual(result, check(observation, constraint,
-                                              check_id="rule", context=context))
-        self.assertEqual(covered, set(REGISTRY), "Add UNKNOWN cases for every registered check")
+                self.assertEqual(
+                    type(result).model_validate_json(result.model_dump_json()), result
+                )
+                self.assertEqual(
+                    result,
+                    check(observation, constraint, check_id="rule", context=context),
+                )
+        self.assertEqual(
+            covered, set(REGISTRY), "Add UNKNOWN cases for every registered check"
+        )

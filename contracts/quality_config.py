@@ -32,27 +32,42 @@ class Reactions(Contract):
         return self
 
 
-class FreshnessParams(Contract):
-    max_age_seconds: int = Field(default=3600, ge=0)
-
-
-class NullRateParams(Contract):
-    max_null_rate: float = Field(default=0.05, ge=0, le=1, allow_inf_nan=False)
-
-
-class RowCountParams(Contract):
-    mode: Literal["historical", "fixed"] = "historical"
-    history_window: int = Field(default=10, ge=1)
+class HistoryParams(Contract):
+    history_window: int = Field(default=10, ge=1, le=1000)
     min_history: int = Field(default=3, ge=1)
-    min_ratio: float = Field(default=0.5, ge=0, allow_inf_nan=False)
-    max_ratio: float = Field(default=2.0, ge=0, allow_inf_nan=False)
+    mad_multiplier: float = Field(default=3.0, ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def history_bounds(self):
+        if self.min_history > self.history_window:
+            raise ValueError("min_history exceeds history_window")
+        return self
+
+
+class NullRateParams(HistoryParams):
+    mode: Literal["historical", "fixed"] = "historical"
+    max_null_rate: float = Field(default=0.05, ge=0, le=1, allow_inf_nan=False)
+    min_increase: float = Field(default=0.05, ge=0, le=1, allow_inf_nan=False)
+    min_samples: int = Field(default=30, ge=1)
+    where_column: NonBlankText | None = None
+    where_value: str | None = None
+
+    @model_validator(mode="after")
+    def condition(self):
+        if (self.where_column is None) != (self.where_value is None):
+            raise ValueError("where_column and where_value must be specified together")
+        return self
+
+
+class RowCountParams(HistoryParams):
+    mode: Literal["historical", "fixed"] = "historical"
+    relative_tolerance: float = Field(default=0.2, ge=0, allow_inf_nan=False)
+    absolute_tolerance: int = Field(default=1, ge=0)
     min_count: int | None = Field(default=None, ge=0)
     max_count: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def bounds(self):
-        if self.min_history > self.history_window or self.min_ratio > self.max_ratio:
-            raise ValueError("invalid historical bounds")
         if self.mode == "fixed":
             if self.min_count is None and self.max_count is None:
                 raise ValueError("fixed row_count requires a bound")
@@ -80,8 +95,50 @@ class SchemaParams(Contract):
         return self
 
 
+class CardinalityParams(HistoryParams):
+    min_samples: int = Field(default=30, ge=1)
+    volume_tolerance: float = Field(default=0.25, ge=0, le=1, allow_inf_nan=False)
+    count_tolerance: float = Field(default=0.2, ge=0, allow_inf_nan=False)
+    ratio_tolerance: float = Field(default=0.1, ge=0, le=1, allow_inf_nan=False)
+
+
+class DistributionParams(HistoryParams):
+    data_type: Literal["numeric", "categorical"]
+    bins: tuple[float, ...] = ()
+    min_samples: int = Field(default=30, ge=1)
+    max_distance: float = Field(default=0.1, ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def valid_bins(self):
+        import math
+
+        if self.data_type == "numeric":
+            if not self.bins or any(not math.isfinite(x) for x in self.bins):
+                raise ValueError("numeric distribution requires finite bin boundaries")
+            if any(a >= b for a, b in zip(self.bins, self.bins[1:])):
+                raise ValueError("bin boundaries must be strictly increasing")
+        elif self.bins:
+            raise ValueError("categorical distributions do not use bins")
+        return self
+
+
+class ValueRuleParams(Contract):
+    rule: Literal["non_negative", "datetime", "date_order"]
+    other_column: NonBlankText | None = None
+    allow_null: bool = False
+    max_invalid_rate: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def other(self):
+        if (self.rule == "date_order") != (self.other_column is not None):
+            raise ValueError("only date_order requires other_column")
+        return self
+
+
 PARAMETERS = {
-    CheckKind.FRESHNESS: FreshnessParams,
+    CheckKind.CARDINALITY: CardinalityParams,
+    CheckKind.DISTRIBUTION: DistributionParams,
+    CheckKind.VALUE_RULE: ValueRuleParams,
     CheckKind.NULL_RATE: NullRateParams,
     CheckKind.ROW_COUNT: RowCountParams,
     CheckKind.SCHEMA: SchemaParams,
@@ -101,8 +158,16 @@ class CheckSpec(Reactions):
     @model_validator(mode="after")
     def parameters(self):
         PARAMETERS[self.kind].model_validate_json(json.dumps(self.params))
-        if (self.kind is CheckKind.NULL_RATE) != (self.column is not None):
-            raise ValueError("only null_rate requires a column")
+        if (
+            self.kind
+            in (
+                CheckKind.NULL_RATE,
+                CheckKind.CARDINALITY,
+                CheckKind.DISTRIBUTION,
+                CheckKind.VALUE_RULE,
+            )
+        ) != (self.column is not None):
+            raise ValueError("column checks require a column; dataset checks forbid it")
         if QualityStatus.PASS in (self.on_insufficient_history, self.on_missing_schema):
             raise ValueError("skips cannot map to PASS")
         return self

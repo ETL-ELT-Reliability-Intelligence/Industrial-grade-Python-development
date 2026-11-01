@@ -1,28 +1,21 @@
 """Registry, evidence preparation and completeness-aware pure aggregation."""
 
-from datetime import timedelta
 import json
-from statistics import median
+from functools import partial
 
 from contracts.evaluation import CheckExecution, ExecutionStatus
 from contracts.quality import (
+    CheckDetail,
     CheckKind,
     DecisionReason,
-    FreshnessConstraint,
-    FreshnessObservation,
-    NullRateConstraint,
-    NullRateObservation,
     PolicyRule,
     QualityContext,
     QualityDecision,
     QualityStatus,
-    RowCountConstraint,
-    RowCountObservation,
     SchemaConstraint,
     SchemaObservation,
 )
 from data_quality.checks import (
-    check_freshness,
     check_null_rate,
     check_row_count,
     check_schema,
@@ -31,82 +24,44 @@ from contracts.quality_config import PARAMETERS
 from data_quality.policies import evaluate_quality
 
 
-def _freshness(params, stats, event, evaluated_at, schema, history):
-    return (
-        FreshnessObservation(
-            last_updated_at=event.received_at, evaluated_at=evaluated_at
-        ),
-        FreshnessConstraint(max_age=timedelta(seconds=params.max_age_seconds)),
-        None,
-    )
+from data_quality.checks.scalar import check_scalar
+from data_quality.preparation import prepare
 
-
-def _null_rate(params, stats, event, evaluated_at, schema, history):
-    return None, NullRateConstraint(max_null_rate=params.max_null_rate), None
-
-
-def _rows(params, stats, event, evaluated_at, schema, history):
-    observation = RowCountObservation(row_count=stats.row_count)
-    if params.mode == "fixed":
-        return (
-            observation,
-            RowCountConstraint(min_count=params.min_count, max_count=params.max_count),
-            None,
-        )
-    values = [
-        int(p.value)
-        for p in history
-        if p.value is not None and p.scope_id != event.batch_id
-    ][: params.history_window]
-    if len(values) < params.min_history:
-        return observation, None, "insufficient_history"
-    baseline = median(values)
-    return (
-        observation,
-        RowCountConstraint(
-            min_count=int(baseline * params.min_ratio),
-            max_count=int(baseline * params.max_ratio),
-        ),
-        None,
-    )
-
-
-def _schema(params, stats, event, evaluated_at, schema, history):
-    fields = params.fields if params.fields is not None else schema
-    if fields is None:
-        return SchemaObservation(fields=stats.schema), None, "missing_schema"
-    return (
-        SchemaObservation(fields=stats.schema),
-        SchemaConstraint(fields=fields, allow_extra_fields=params.allow_extra_fields),
-        None,
-    )
-
-
-# Each entry owns execution and preparation. No dispatch branches in the runner.
 REGISTRY = {
-    CheckKind.FRESHNESS: (check_freshness, _freshness),
-    CheckKind.NULL_RATE: (check_null_rate, _null_rate),
-    CheckKind.ROW_COUNT: (check_row_count, _rows),
-    CheckKind.SCHEMA: (check_schema, _schema),
+    CheckKind.ROW_COUNT: check_row_count,
+    CheckKind.NULL_RATE: check_null_rate,
+    CheckKind.SCHEMA: check_schema,
+    CheckKind.CARDINALITY: partial(check_scalar, kind=CheckKind.CARDINALITY),
+    CheckKind.DISTRIBUTION: partial(check_scalar, kind=CheckKind.DISTRIBUTION),
+    CheckKind.VALUE_RULE: partial(check_scalar, kind=CheckKind.VALUE_RULE),
 }
 
 
-def prepare_check(check, stats, event, evaluated_at, schema, history):
+def prepare_check(check, stats, event, evaluated_at, schema, history, profile):
     params = PARAMETERS[check.spec.kind].model_validate_json(
         json.dumps(check.spec.params)
     )
-    _, prepare = REGISTRY[check.spec.kind]
-    observation, constraint, code = prepare(
-        params, stats, event, evaluated_at, schema, history
-    )
-    if check.spec.kind is CheckKind.NULL_RATE:
-        observation = NullRateObservation(
-            null_rate=stats.null_rates.get(check.spec.column)
+    if check.spec.kind is CheckKind.SCHEMA:
+        fields = params.fields if params.fields is not None else schema
+        observation = SchemaObservation(fields=stats.schema)
+        constraint = (
+            SchemaConstraint(
+                fields=fields, allow_extra_fields=params.allow_extra_fields
+            )
+            if fields is not None
+            else None
+        )
+        code = "missing_schema" if fields is None else None
+        baseline = {}
+    else:
+        observation, constraint, code, baseline = prepare(
+            check.spec, params, profile, history
         )
     return check.model_copy(
         update={
             "observation": observation,
             "constraint": constraint,
+            "baseline": baseline,
             "state": ExecutionStatus.SKIPPED if code else ExecutionStatus.PENDING,
             "code": code,
             "message": code.replace("_", " ") if code else None,
@@ -115,8 +70,7 @@ def prepare_check(check, stats, event, evaluated_at, schema, history):
 
 
 def execute_check(check, event):
-    function, _ = REGISTRY[check.spec.kind]
-    return function(
+    result = REGISTRY[check.spec.kind](
         check.observation,
         check.constraint,
         check_id=check.check_id,
@@ -126,6 +80,21 @@ def execute_check(check, event):
             column=check.spec.column,
         ),
     )
+    if check.baseline:
+        result = result.model_copy(
+            update={
+                "details": result.details
+                + (
+                    CheckDetail(
+                        code="historical_baseline",
+                        expected=json.dumps(
+                            check.baseline, ensure_ascii=False, sort_keys=True
+                        ),
+                    ),
+                )
+            }
+        )
+    return result
 
 
 def finalize(
@@ -182,7 +151,11 @@ def finalize(
         )
         reaction = QualityStatus.BLOCK if spec.required else QualityStatus.WARN
         if item is not None and item.state is ExecutionStatus.SKIPPED:
-            if code == "insufficient_history":
+            if code in {
+                "insufficient_history",
+                "insufficient_samples",
+                "incomplete_window",
+            }:
                 reaction = spec.on_insufficient_history
             elif code == "missing_schema":
                 reaction = spec.on_missing_schema
