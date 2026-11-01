@@ -19,19 +19,15 @@ from airflow.operators.python import get_current_context
 
 from pipelines.airflow.config import make_publisher as _publisher
 from pipelines.airflow.config import make_store as _store
+from pipelines.airflow.dbt_command import dbt_command
 from pipelines.airflow.load_postgres import load_dataset_batch
 from pipelines.airflow.olist_pipeline import TABLES, ingest_table
 from pipelines.airflow.pipeline_events import PipelineRunReporter
 
 PIPELINE_ID = "olist_ingestion"
 DBT_PROJECT_DIR = os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/repo/pipelines/dbt")
-# dbt lives in its own venv (installing it next to Airflow breaks Airflow's pinned dependencies). The image
-# built from infra/airflow already contains it; the fallback creates it on the first run for other setups.
 DBT_VENV = os.environ.get("DBT_VENV", "/home/airflow/dbt-venv")
-DBT_COMMAND = (
-    f"[ -x {DBT_VENV}/bin/dbt ] || (python -m venv {DBT_VENV} && {DBT_VENV}/bin/pip install -q dbt-postgres) "
-    f"&& {DBT_VENV}/bin/dbt run --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR}"
-)
+DBT_COMMAND = dbt_command(project_dir=DBT_PROJECT_DIR, venv=DBT_VENV)
 
 
 def _on_failure(context) -> None:
