@@ -48,22 +48,26 @@ class KafkaPublisher:
             event.topic, key=event.key, value=event.model_dump_json(), on_delivery=on_delivery,
         )
         if self._producer.flush(10) or errors:
-            raise RuntimeError(f"Kafka delivery failed: {errors[0] if errors else 'timeout'}")
+            error = errors[0] if errors else None
+            if error is None or getattr(error, "retriable", lambda: False)():
+                raise ConnectionError(f"Kafka delivery failed: {error or 'timeout'}")
+            raise RuntimeError(f"Kafka delivery failed: {error}")
 
 
-def quality_failed_event_id(dataset_id: str, scope_id: str, check_id: str) -> UUID:
+def quality_failed_event_id(dataset_id: str, scope_id: str, check_id: str, evaluation_id: str | None = None) -> UUID:
     """Deterministic UUID so redelivered batches emit the same failure event ID."""
-    return uuid5(NAMESPACE_URL, f"data.quality.failed:{dataset_id}:{scope_id}:{check_id}")
+    suffix = f":{evaluation_id}" if evaluation_id else ""
+    return uuid5(NAMESPACE_URL, f"data.quality.failed:{dataset_id}:{scope_id}:{check_id}{suffix}")
 
 
-def build_quality_failed_event(result: CheckResult, failed_at: datetime) -> DataQualityFailedEvent:
+def build_quality_failed_event(result: CheckResult, failed_at: datetime, *, evaluation_id: str | None = None) -> DataQualityFailedEvent:
     """Build a DataQualityFailedEvent from a failed CheckResult with context."""
     if result.context is None:
         raise ValueError("CheckResult must have a QualityContext to emit DataQualityFailedEvent")
     dataset_id = result.context.dataset_id
     scope_id = result.context.scope_id
     return DataQualityFailedEvent(
-        event_id=quality_failed_event_id(dataset_id, scope_id, result.check_id),
+        event_id=quality_failed_event_id(dataset_id, scope_id, result.check_id, evaluation_id),
         dataset_id=dataset_id,
         scope_id=scope_id,
         check_id=result.check_id,

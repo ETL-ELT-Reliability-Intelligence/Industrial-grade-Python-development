@@ -3,6 +3,7 @@ name = "etl-reliability-intelligence"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "PyYAML>=6,<7",
     "pydantic>=2.9",
     "fastapi>=0.115,<1",
     "uvicorn>=0.30,<1",

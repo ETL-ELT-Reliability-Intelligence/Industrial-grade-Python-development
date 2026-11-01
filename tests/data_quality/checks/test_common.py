@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 from contracts.quality import CheckKind, CheckStatus, FreshnessConstraint, FreshnessObservation, NullRateConstraint, NullRateObservation, QualityContext, RowCountConstraint, RowCountObservation, SchemaConstraint, SchemaObservation
 from data_quality.checks import check_freshness, check_null_rate, check_row_count, check_schema
+from data_quality.execution import REGISTRY
 
 
 class CommonCheckTests(unittest.TestCase):
@@ -13,6 +14,7 @@ class CommonCheckTests(unittest.TestCase):
         """Return UNKNOWN consistently and preserve all caller-supplied evidence."""
         now = datetime(2026, 10, 4, tzinfo=timezone.utc)
         context = QualityContext(dataset_id="orders", scope_id="window-42")
+        covered = set()
         for check, kind, observation, constraint in (
             (check_freshness, CheckKind.FRESHNESS, FreshnessObservation(last_updated_at=None, evaluated_at=now),
              FreshnessConstraint(max_age=timedelta(hours=1))),
@@ -22,6 +24,7 @@ class CommonCheckTests(unittest.TestCase):
              RowCountConstraint(min_count=1)),
             (check_schema, CheckKind.SCHEMA, SchemaObservation(fields=None), SchemaConstraint(fields=())),
         ):
+            covered.add(kind)
             with self.subTest(kind=kind):
                 result = check(observation, constraint, check_id="rule", context=context)
                 self.assertIs(result.status, CheckStatus.UNKNOWN)
@@ -34,3 +37,4 @@ class CommonCheckTests(unittest.TestCase):
                 self.assertEqual(type(result).model_validate_json(result.model_dump_json()), result)
                 self.assertEqual(result, check(observation, constraint,
                                               check_id="rule", context=context))
+        self.assertEqual(covered, set(REGISTRY), "Add UNKNOWN cases for every registered check")

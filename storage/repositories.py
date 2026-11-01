@@ -6,6 +6,9 @@ Implementations decide how; see storage.postgres for PostgreSQL.
 
 from datetime import datetime
 from typing import Protocol
+from contextlib import AbstractContextManager
+
+from contracts.evaluation import Evaluation, CheckExecution
 
 from contracts.metrics import MetricKind, MetricPoint
 from contracts.quality import CheckResult, QualityDecision, SchemaField
@@ -73,6 +76,20 @@ class MetricRepository(Protocol):
 
 class QualityRepository(Protocol):
     """Results of deterministic checks and policy decisions."""
+
+    def evaluation_lock(self, dataset_id: str, scope_id: str) -> AbstractContextManager: ...
+
+    def get_evaluation(self, evaluation_id: str) -> Evaluation | None: ...
+
+    def save_evaluation(self, evaluation: Evaluation) -> None: ...
+
+    def save_execution(self, evaluation_id: str, execution: CheckExecution) -> None: ...
+
+    def list_evaluations(self, dataset_id: str, scope_id: str) -> list[Evaluation]: ...
+
+    def project_evaluation(self, evaluation: Evaluation) -> None:
+        """Atomically update legacy read tables from the newest evaluation only."""
+        ...
 
     def save_check_result(self, result: CheckResult) -> None:
         """Store a result; the latest result per check, scope and column wins.

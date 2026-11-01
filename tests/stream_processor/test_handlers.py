@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import json
 
-import pytest
 
 from contracts.events import (
     DataQualityFailedEvent,
@@ -15,7 +14,9 @@ from contracts.metrics import MetricKind, MetricPoint
 from contracts.quality import CheckKind, CheckResult, CheckStatus, QualityDecision, QualityStatus, SchemaField
 from contracts.state import Batch, PipelineRun, PipelineRunStatus
 from services.stream_processor.handlers import StreamEventHandler
-from services.stream_processor.policy import QualityThresholds
+from contextlib import nullcontext
+from contracts.evaluation import Evaluation
+from contracts.quality_config import CheckSuite
 from services.stream_processor.publisher import InMemoryPublisher, quality_failed_event_id
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
@@ -110,6 +111,37 @@ class FakeQuality:
     def __init__(self) -> None:
         self.results: dict[tuple[str, str, str, str | None], CheckResult] = {}
         self.decisions: dict[tuple[str, str], QualityDecision] = {}
+        self.evaluations = {}
+
+    def evaluation_lock(self, dataset_id, scope_id):
+        return nullcontext()
+
+    def get_evaluation(self, evaluation_id):
+        return self.evaluations.get(evaluation_id)
+
+    def save_evaluation(self, evaluation):
+        if evaluation.evaluation_id not in self.evaluations:
+            self.decisions.pop((evaluation.event.dataset_id, evaluation.event.batch_id), None)
+        self.evaluations[evaluation.evaluation_id] = Evaluation.model_validate_json(evaluation.model_dump_json())
+
+    def save_execution(self, evaluation_id, execution):
+        evaluation = self.evaluations[evaluation_id]
+        checks = tuple(execution if c.check_id == execution.check_id else c for c in evaluation.checks)
+        self.save_evaluation(evaluation.model_copy(update={"checks": checks}))
+
+    def list_evaluations(self, dataset_id, scope_id):
+        return [e for e in reversed(list(self.evaluations.values())) if e.event.dataset_id == dataset_id and e.event.batch_id == scope_id]
+
+    def project_evaluation(self, evaluation):
+        event = evaluation.event
+        if self.list_evaluations(event.dataset_id, event.batch_id)[0].evaluation_id != evaluation.evaluation_id:
+            return
+        self.results = {k: v for k, v in self.results.items() if (k[1], k[2]) != (event.dataset_id, event.batch_id)}
+        for check in evaluation.checks:
+            if check.result is not None:
+                self.save_check_result(check.result)
+        self.save_quality_decision(event.dataset_id, event.batch_id, evaluation.decision, evaluation.evaluated_at)
+
 
     def save_check_result(self, result: CheckResult) -> None:
         if result.context is None:
@@ -145,7 +177,24 @@ def write_batch(tmp_path, name: str, records: list[dict]) -> str:
     return path.as_uri()
 
 
-def make_handler(clock=lambda: NOW + MINUTE, thresholds: QualityThresholds | None = None):
+def test_suite(dataset_id="orders"):
+    return CheckSuite.model_validate_json(json.dumps({
+        "dataset_id": dataset_id,
+        "retry": {"max_attempts": 3, "delays_seconds": [0, 0]},
+        "checks": [
+            {"key": "schema", "kind": "schema"},
+            {"key": "freshness", "kind": "freshness"},
+            {"key": "id.null_rate", "kind": "null_rate", "column": "id"},
+            {"key": "amount.null_rate", "kind": "null_rate", "column": "amount"},
+            {"key": "row_count", "kind": "row_count"},
+        ],
+    }))
+
+
+test_suite.__test__ = False
+
+
+def make_handler(clock=lambda: NOW + MINUTE, suites=None):
     datasets = FakeDatasets()
     pipelines = FakePipelines()
     metrics = FakeMetrics()
@@ -153,12 +202,12 @@ def make_handler(clock=lambda: NOW + MINUTE, thresholds: QualityThresholds | Non
     publisher = InMemoryPublisher()
     handler = StreamEventHandler(
         datasets, pipelines, metrics, quality,
-        publisher=publisher, thresholds=thresholds, clock=clock,
+        publisher=publisher, suites=suites if suites is not None else {"orders": test_suite()}, clock=clock, sleep=lambda _: None,
     )
     return handler, datasets, pipelines, metrics, quality, publisher
 
 
-def test_first_batch_saves_schema_metrics_checks_and_pass_decision(tmp_path):
+def test_first_batch_saves_metrics_and_warns_about_missing_baselines(tmp_path):
     handler, datasets, _, metrics, quality, publisher = make_handler()
     uri = write_batch(tmp_path, "b1", [{"id": 1, "amount": 10.0}, {"id": 2, "amount": 20.0}])
     event = DatasetIngestedEvent(
@@ -183,7 +232,7 @@ def test_first_batch_saves_schema_metrics_checks_and_pass_decision(tmp_path):
 
     results = quality.list_check_results("orders", "b1")
     assert {r.kind for r in results} == {CheckKind.FRESHNESS, CheckKind.NULL_RATE}
-    assert quality.get_quality_decision("orders", "b1").status is QualityStatus.PASS
+    assert quality.get_quality_decision("orders", "b1").status is QualityStatus.WARN
     assert publisher.events == []
 
 
@@ -200,7 +249,7 @@ def test_redelivered_event_is_idempotent_without_duplicates(tmp_path):
 
     assert len(datasets.list_batches("orders")) == 1
     assert len(metrics.list_metric_history("orders", MetricKind.ROW_COUNT)) == 1
-    assert len(quality.list_check_results("orders", "b1")) == 2
+    assert len(quality.list_check_results("orders", "b1")) == 3
 
 
 def test_row_count_drop_after_history_fails_and_blocks(tmp_path):
@@ -227,7 +276,7 @@ def test_row_count_drop_after_history_fails_and_blocks(tmp_path):
     failed = publisher.events[0]
     assert isinstance(failed, DataQualityFailedEvent)
     assert failed.check_id == "orders.row_count"
-    assert failed.event_id == quality_failed_event_id("orders", "b4", "orders.row_count")
+    assert failed.event_id == quality_failed_event_id("orders", "b4", "orders.row_count", quality.list_evaluations("orders", "b4")[0].evaluation_id)
 
 
 def test_schema_change_fails_check_and_saves_new_version(tmp_path):
@@ -264,7 +313,7 @@ def test_event_without_raw_uri_saves_batch_only():
     assert datasets.get_batch("orders", "b1") is not None
     assert metrics.list_metric_history("orders", MetricKind.ROW_COUNT) == []
     assert quality.list_check_results("orders", "b1") == []
-    assert quality.get_quality_decision("orders", "b1") is None
+    assert quality.get_quality_decision("orders", "b1").status is QualityStatus.BLOCK
     assert publisher.events == []
 
 
@@ -303,21 +352,3 @@ def test_unhandled_event_is_ignored():
     ))
     assert datasets.datasets == set()
     assert pipelines.runs == {}
-
-
-def test_thresholds_are_read_from_environment():
-    thresholds = QualityThresholds.from_env({
-        "QUALITY_MAX_FRESHNESS_SECONDS": "120",
-        "QUALITY_MAX_NULL_RATE": "0.1",
-        "QUALITY_ROW_COUNT_HISTORY_WINDOW": "5",
-        "QUALITY_ROW_COUNT_MIN_HISTORY": "2",
-        "QUALITY_ROW_COUNT_MIN_RATIO": "0.6",
-        "QUALITY_ROW_COUNT_MAX_RATIO": "1.5",
-    })
-    assert thresholds.max_freshness_seconds == 120
-    assert thresholds.max_null_rate == 0.1
-    assert thresholds.row_count_history_window == 5
-    assert thresholds.row_count_min_history == 2
-
-    with pytest.raises(ValueError):
-        QualityThresholds(max_null_rate=1.5)
