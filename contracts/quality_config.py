@@ -122,4 +122,12 @@ class CheckSuite(Contract):
 
     @property
     def fingerprint(self) -> str:
-        return hashlib.sha256(self.model_dump_json().encode()).hexdigest()
+        """Hash stable JSON: JSONB can reorder object keys, including params."""
+        canonical = json.dumps(
+            self.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

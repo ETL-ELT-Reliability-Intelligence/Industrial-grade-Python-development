@@ -1,8 +1,10 @@
 from pathlib import Path
+import json
 
 import pytest
 
 from data_quality.config import load_suites
+from contracts.quality_config import CheckSuite
 
 
 def config_tree(tmp_path):
@@ -56,8 +58,41 @@ def test_invalid_configuration_is_rejected_at_startup(tmp_path, content):
 
 def test_shipped_profiles_load():
     suites = load_suites(Path("config/quality"))
-    assert {"orders", "customers", "order_items", "order_payments"} <= suites.keys()
-    assert all(suite.checks for suite in suites.values())
+    for dataset_id in ("orders", "customers", "order_items", "order_payments"):
+        suite = suites.get(dataset_id)
+        assert suite is not None
+        assert suite.dataset_id == dataset_id
+        assert suite.checks
+
+
+def test_fingerprint_survives_nested_json_key_reordering():
+    suite = CheckSuite.model_validate_json(
+        json.dumps(
+            {
+                "dataset_id": "orders",
+                "checks": [
+                    {
+                        "key": "rows",
+                        "kind": "row_count",
+                        "params": {"mode": "fixed", "min_count": 10, "max_count": 20},
+                    }
+                ],
+            }
+        )
+    )
+    reordered = CheckSuite.model_validate_json(
+        json.dumps(suite.model_dump(mode="json"), sort_keys=True)
+    )
+    assert list(suite.checks[0].params) != list(reordered.checks[0].params)
+    assert suite == reordered
+    assert suite.fingerprint == reordered.fingerprint
+
+    changed = reordered.model_dump(mode="json")
+    changed["checks"][0]["params"]["min_count"] = 11
+    assert (
+        CheckSuite.model_validate_json(json.dumps(changed)).fingerprint
+        != suite.fingerprint
+    )
 
 
 def enable_fallback(root):

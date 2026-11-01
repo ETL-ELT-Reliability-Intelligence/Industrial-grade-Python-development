@@ -45,7 +45,11 @@ class ApplicationPostgresTests(DatabaseTestCase):
             assert response.status_code == 200
             body = response.json()
             assert body["decision"] == decision.model_dump(mode="json")
-            assert body["decision"]["status"] == "PASS"
+            # The first batch has neither historical bounds nor a schema baseline.
+            assert body["decision"]["status"] == "WARN"
+            assert {reason["code"] for reason in body["decision"]["reasons"]} >= {
+                "insufficient_history", "missing_schema",
+            }
             assert body["decided_at"]
             assert {
                 item["result"]["check_id"]: item["result"] for item in body["checks"]

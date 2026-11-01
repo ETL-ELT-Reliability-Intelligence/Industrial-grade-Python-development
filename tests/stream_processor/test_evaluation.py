@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from contracts.evaluation import ExecutionStatus
+from contracts.evaluation import Evaluation, ExecutionStatus
 from contracts.events import DatasetIngestedEvent
 from contracts.quality import QualityStatus
 from contracts.quality_config import CheckSuite
@@ -46,6 +46,18 @@ def event_for(tmp_path, rows=None):
         schema_version=1,
         raw_uri=write_batch(tmp_path, "b1", rows),
     )
+
+
+def test_evaluation_validates_after_json_object_keys_are_reordered(tmp_path):
+    handler, _, _, _, _, _ = make_handler(suites={"orders": suite()})
+    original = handler.handle_dataset_ingested(event_for(tmp_path))
+    payload = original.model_dump(mode="json")
+    restored = Evaluation.model_validate_json(json.dumps(payload, sort_keys=True))
+    assert restored == original
+
+    payload["suite"]["checks"][0]["params"]["min_count"] = 100
+    with pytest.raises(ValueError, match="configuration identity mismatch"):
+        Evaluation.model_validate_json(json.dumps(payload, sort_keys=True))
 
 
 def test_replay_uses_original_time_configuration_and_results(tmp_path, monkeypatch):
