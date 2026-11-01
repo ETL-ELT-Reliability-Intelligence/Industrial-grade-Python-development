@@ -1,11 +1,12 @@
-"""Event publishing for stream processor quality failure notifications."""
+"""Event publishing for stream processor quality failure and anomaly notifications."""
 
 from datetime import datetime
 from typing import Protocol
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from contracts.events import DataQualityFailedEvent, Event
+from contracts.events import AnomalyDetectedEvent, DataQualityFailedEvent, Event
 from contracts.quality import CheckResult, DecisionReason
+from contracts.state import Anomaly
 
 
 class EventPublisher(Protocol):
@@ -73,6 +74,23 @@ def build_quality_failed_event(result: CheckResult, failed_at: datetime, *, eval
         check_id=result.check_id,
         reason_code=result.reason_code,
         failed_at=failed_at,
+    )
+
+
+def build_anomaly_event(anomaly: Anomaly) -> AnomalyDetectedEvent:
+    """Собирает AnomalyDetectedEvent с детерминированным event_id."""
+    return AnomalyDetectedEvent(
+        event_id=uuid5(NAMESPACE_URL, f"anomaly.detected:{anomaly.anomaly_id}"),
+        anomaly_id=anomaly.anomaly_id,
+        dataset_id=anomaly.dataset_id,
+        batch_id=anomaly.batch_id,
+        metric=anomaly.metric,
+        expected=anomaly.expected,
+        actual=anomaly.actual,
+        score=anomaly.score,
+        detector=anomaly.detector,
+        model_version=anomaly.model_version,
+        detected_at=anomaly.detected_at,
     )
 
 

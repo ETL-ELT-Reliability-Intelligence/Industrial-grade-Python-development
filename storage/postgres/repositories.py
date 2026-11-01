@@ -220,6 +220,15 @@ class PostgresMetricRepository(_PostgresRepository):
             ),
         )
 
+    def get_profile(self, dataset_id: str, scope_id: str) -> BatchProfile | None:
+        row = self._connection.execute(
+            "SELECT profile FROM dataset_profiles WHERE dataset_id = %s AND scope_id = %s",
+            (dataset_id, scope_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return BatchProfile.model_validate_json(json.dumps(row["profile"]))
+
     def list_profiles(self, dataset_id: str) -> list[BatchProfile]:
         rows = self._connection.execute(
             "SELECT profile FROM dataset_profiles WHERE dataset_id = %s", (dataset_id,)

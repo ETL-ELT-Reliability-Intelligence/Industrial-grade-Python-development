@@ -22,6 +22,7 @@ from contracts.quality import (
 )
 from contracts.state import Batch, PipelineRun, PipelineRunStatus
 from storage.repositories import (
+    AnomalyRepository,
     DatasetRepository,
     MetricRepository,
     PipelineRunRepository,
@@ -30,10 +31,12 @@ from storage.repositories import (
 
 from data_quality.config import load_suites, CheckSuite
 from data_quality.execution import prepare_check
+from .anomaly import AnomalyConfig, detect_anomalies
 from .evaluation import EvaluationRunner
 from .publisher import (
     EventPublisher,
     NoOpPublisher,
+    build_anomaly_event,
     build_quality_failed_event,
     build_quality_failed_from_reason,
 )
@@ -44,6 +47,15 @@ from .profiling import build_profile
 from data_quality.history import select_history, eligible
 
 STATS_VERSION = "v2"
+
+
+def _history_limit(evaluation) -> int:
+    """Ограничивает историю одинаково для проверок и детекции аномалий."""
+    max_window = max(
+        (c.params.get("history_window", 10) for c in evaluation.suite.checks),
+        default=10,
+    )
+    return max(max_window * 4, 40)
 
 
 class StreamEventHandler:
@@ -59,6 +71,9 @@ class StreamEventHandler:
         suites: Mapping[str, CheckSuite] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         sleep: Callable[[float], None] = time.sleep,
+        *,
+        anomalies: AnomalyRepository | None = None,
+        anomaly_config: AnomalyConfig | None = None,
     ) -> None:
         self._datasets = datasets
         self._pipelines = pipelines
@@ -72,6 +87,8 @@ class StreamEventHandler:
         )
         self._clock = clock
         self._runner = EvaluationRunner(quality, clock=clock, sleep=sleep)
+        self._anomalies = anomalies
+        self._anomaly_config = anomaly_config
 
     def handle(self, event: Event) -> None:
         """Dispatch a parsed event to its specific handler; ignore unhandled types.
@@ -133,6 +150,30 @@ class StreamEventHandler:
                     )
                     if reason.check_id:
                         published_check_ids.add(reason.check_id)
+        if self._anomalies is not None and self._anomaly_config is not None:
+            self._detect_anomalies(evaluation)
+
+    def _detect_anomalies(self, evaluation) -> None:
+        """Ищет отклонения доставленного профиля относительно его допустимой истории."""
+        event = evaluation.event
+        profile = self._metrics.get_profile(event.dataset_id, event.batch_id)
+        if profile is None:
+            return
+        history = select_history(
+            profile,
+            self._metrics.list_comparable_profiles(
+                event.dataset_id,
+                source_id=event.source_id,
+                granularity=event.granularity,
+                schema_version=event.schema_version,
+                stats_version=profile.stats_version,
+                config_hash=profile.config_hash,
+                limit=_history_limit(evaluation),
+            ),
+        )
+        for anomaly in detect_anomalies(profile, history, self._anomaly_config):
+            self._anomalies.save_anomaly(anomaly)
+            self._publisher.publish(build_anomaly_event(anomaly))
 
     def _prepare(self, evaluation):
         event = evaluation.event
@@ -153,11 +194,7 @@ class StreamEventHandler:
         profile = build_profile(event, records, evaluation.suite)
         stats = statistics_from_profile(profile)
         expected_schema = self._previous_schema(event.dataset_id, event.schema_version)
-        max_window = max(
-            (c.params.get("history_window", 10) for c in evaluation.suite.checks),
-            default=10,
-        )
-        history_limit = max(max_window * 4, 40)
+        history_limit = _history_limit(evaluation)
         history = select_history(
             profile,
             self._metrics.list_comparable_profiles(
