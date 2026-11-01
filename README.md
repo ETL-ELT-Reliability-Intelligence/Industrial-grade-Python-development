@@ -141,3 +141,7 @@ Olist CSV ─► ingestion (по таблице = датасет) ─► S3 (jso
 ### Куриш М.В.
 
 Зафиксировал решения по границам Speed/Batch Layer (базовые статистики строятся в Speed, ML-модели drift — в Batch) и владению аномалиями (rule-based детектор у роли №2, ML — у роли №3), устранил дефекты — статистики теперь строятся из профиля батча за один проход вместо двух, история профилей выбирается в SQL с `LIMIT` вместо загрузки всех записей в Python, события о качестве публикуются и при решении `BLOCK` без явных `FAIL`-результатов. Добавил rule-based детектор аномалий (`anomaly.py`: robust z-score по медиане+MAD для row_count, null_rate, distinct_ratio, запись в таблицу `anomalies` и публикация `anomaly.detected`) и запуск `dbt test` после `dbt run` в DAG `olist_ingestion` с объявленными тестами staging/marts (not_null, unique, relationships). Осталась синхронизация документации и полный демо-прогон.
+
+### Ульянова Е.А.
+
+Чтобы более не увеличивать текст основного README перешла с недельными отчётами в папку [reports/ulyanova](./reports/ulyanova).

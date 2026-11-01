@@ -41,10 +41,13 @@ from .publisher import (
     build_quality_failed_event,
     build_quality_failed_from_reason,
 )
+from .evaluation import EvaluationRunner, PreparedChecks
+from .publisher import EventPublisher, NoOpPublisher, build_quality_failed_event
 from .raw import read_raw
 from .statistics import DatasetStatistics, statistics_from_profile
 
 from .profiling import build_profile
+from .feature_accumulation import FeatureAccumulator
 from data_quality.history import select_history, eligible
 
 STATS_VERSION = "v2"
@@ -75,6 +78,7 @@ class StreamEventHandler:
         *,
         anomalies: AnomalyRepository | None = None,
         anomaly_config: AnomalyConfig | None = None,
+        feature_definitions=None,
     ) -> None:
         self._datasets = datasets
         self._pipelines = pipelines
@@ -90,6 +94,7 @@ class StreamEventHandler:
         self._runner = EvaluationRunner(quality, clock=clock, sleep=sleep)
         self._anomalies = anomalies
         self._anomaly_config = anomaly_config
+        self._features = FeatureAccumulator(metrics, clock, feature_definitions)
 
     def handle(self, event: Event) -> None:
         """Dispatch a parsed event to its specific handler; ignore unhandled types.
@@ -107,13 +112,16 @@ class StreamEventHandler:
     ):
         """Resume the initial evaluation, or use an explicit request ID to reevaluate."""
         with self._quality.evaluation_lock(event.dataset_id, event.batch_id):
+            captured = []
             evaluation = self._runner.run(
                 event,
                 self._suites.get(event.dataset_id),
-                self._prepare,
+                lambda current: self._prepare(current, capture=captured),
                 request_id=request_id,
             )
-            return self._runner.deliver(evaluation, self._deliver)
+            evaluation = self._runner.deliver(evaluation, self._deliver)
+            self._features.collect(evaluation, captured[0] if captured else None)
+            return evaluation
 
     def _deliver(self, evaluation):
         self._quality.project_evaluation(evaluation)
@@ -209,7 +217,7 @@ class StreamEventHandler:
             self._anomalies.save_anomaly(anomaly)
             self._publisher.publish(build_anomaly_event(anomaly))
 
-    def _prepare(self, evaluation):
+    def _prepare(self, evaluation, *, capture=None):
         event = evaluation.event
         self._datasets.ensure_dataset(event.dataset_id)
         self._datasets.upsert_batch(
@@ -225,6 +233,9 @@ class StreamEventHandler:
         if event.raw_uri is None:
             raise ValueError("missing_raw_uri: quality evaluation requires raw data")
         records = read_raw(event.raw_uri)
+        if capture is not None:
+            capture[:] = [records]
+        stats = compute_statistics(records)
         profile = build_profile(event, records, evaluation.suite)
         stats = statistics_from_profile(profile)
         expected_schema = self._previous_schema(event.dataset_id, event.schema_version)
@@ -268,7 +279,7 @@ class StreamEventHandler:
             )
         )
         self._save_metrics(event, stats, profile)
-        return checks
+        return PreparedChecks(checks, getattr(records, "sha256", None))
 
     def handle_pipeline_event(self, event: PipelineEvent) -> None:
         """Persist pipeline run lifecycle transitions in pipeline_runs."""

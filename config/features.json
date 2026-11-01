@@ -1,0 +1,51 @@
+{
+  "orders": {
+    "columns": [
+      {"name": "customer_id"},
+      {"name": "order_delivered_customer_date"},
+      {"name": "order_id"},
+      {"name": "order_purchase_timestamp"},
+      {"name": "order_status", "kind": "categorical", "categories": ["approved", "canceled", "created", "delivered", "invoiced", "processing", "shipped", "unavailable"]}
+    ]
+  },
+  "order_items": {
+    "columns": [
+      {"name": "freight_value", "kind": "numeric"},
+      {"name": "order_id"},
+      {"name": "order_item_id"},
+      {"name": "price", "kind": "numeric"},
+      {"name": "product_id"},
+      {"name": "seller_id"}
+    ]
+  },
+  "order_payments": {
+    "columns": [
+      {"name": "order_id"},
+      {"name": "payment_installments", "kind": "numeric"},
+      {"name": "payment_type", "kind": "categorical", "categories": ["boleto", "credit_card", "debit_card", "not_defined", "voucher"]},
+      {"name": "payment_value", "kind": "numeric"}
+    ]
+  },
+  "customers": {
+    "columns": [
+      {"name": "customer_city"},
+      {"name": "customer_id"},
+      {"name": "customer_state", "kind": "categorical", "categories": ["AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"]},
+      {"name": "customer_unique_id"},
+      {"name": "customer_zip_code_prefix"}
+    ]
+  },
+  "mock_orders": {
+    "columns": [
+      {"name": "amount", "kind": "numeric"},
+      {"name": "order_id"},
+      {"name": "payment_method", "kind": "categorical", "categories": ["card", "cash", "other"]}
+    ]
+  },
+  "ingested-app-orders": {
+    "columns": [
+      {"name": "amount", "kind": "numeric"},
+      {"name": "order_id"}
+    ]
+  }
+}
