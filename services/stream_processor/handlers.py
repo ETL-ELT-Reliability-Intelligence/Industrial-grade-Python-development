@@ -41,11 +41,8 @@ from .publisher import (
     build_quality_failed_event,
     build_quality_failed_from_reason,
 )
-from .evaluation import EvaluationRunner, PreparedChecks
-from .publisher import EventPublisher, NoOpPublisher, build_quality_failed_event
 from .raw import read_raw
-from .statistics import DatasetStatistics, statistics_from_profile
-
+from .statistics import statistics_from_profile
 from .profiling import build_profile
 from .feature_accumulation import FeatureAccumulator
 from data_quality.history import select_history, eligible
@@ -235,7 +232,6 @@ class StreamEventHandler:
         records = read_raw(event.raw_uri)
         if capture is not None:
             capture[:] = [records]
-        stats = compute_statistics(records)
         profile = build_profile(event, records, evaluation.suite)
         stats = statistics_from_profile(profile)
         expected_schema = self._previous_schema(event.dataset_id, event.schema_version)
@@ -267,16 +263,6 @@ class StreamEventHandler:
         self._metrics.save_profile(profile)
         self._datasets.save_schema(
             event.dataset_id, event.schema_version, stats.schema, event.received_at
-        )
-        self._datasets.upsert_batch(
-            Batch(
-                dataset_id=event.dataset_id,
-                batch_id=event.batch_id,
-                records=stats.row_count,
-                received_at=event.received_at,
-                schema_version=event.schema_version,
-                object_key=event.raw_uri,
-            )
         )
         self._save_metrics(event, stats, profile)
         return PreparedChecks(checks, getattr(records, "sha256", None))
