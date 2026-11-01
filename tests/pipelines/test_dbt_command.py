@@ -17,8 +17,6 @@ def test_dbt_command_contains_paths():
 
 def test_dbt_command_uses_same_venv_for_both_steps():
     cmd = dbt_command("/some/project", "/some/venv")
-    parts = cmd.split("&&")
-    run_step = parts[1].strip()
-    test_step = parts[2].strip()
-    assert run_step.startswith("/some/venv/bin/dbt run")
-    assert test_step.startswith("/some/venv/bin/dbt test")
+    # Шаг установки содержит вложенный "&&", поэтому проверяем вхождения, а не части строки.
+    assert cmd.count("/some/venv/bin/dbt run") == 1
+    assert cmd.count("/some/venv/bin/dbt test") == 1
