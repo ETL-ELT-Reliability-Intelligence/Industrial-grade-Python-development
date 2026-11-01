@@ -20,6 +20,7 @@ from contracts.quality import (
     QualityStatus,
     SchemaField,
 )
+from contracts.evaluation import ExecutionStatus
 from contracts.state import Batch, PipelineRun, PipelineRunStatus
 from storage.repositories import (
     AnomalyRepository,
@@ -137,21 +138,54 @@ class StreamEventHandler:
                 )
                 published_check_ids.add(check.result.check_id)
         if evaluation.decision and evaluation.decision.status is QualityStatus.BLOCK:
+            blocking = {
+                check.check_id
+                for check in evaluation.checks
+                if self._check_reaction(check) is QualityStatus.BLOCK
+            }
             for reason in evaluation.decision.reasons:
-                if reason.check_id not in published_check_ids:
-                    self._publisher.publish(
-                        build_quality_failed_from_reason(
-                            reason,
-                            evaluation.evaluated_at,
-                            evaluation_id=evaluation.evaluation_id,
-                            dataset_id=evaluation.event.dataset_id,
-                            scope_id=evaluation.event.batch_id,
-                        )
+                # Публикуем только блокирующие причины, ещё не покрытые FAIL-событием.
+                if (
+                    reason.check_id not in blocking
+                    or reason.check_id in published_check_ids
+                ):
+                    continue
+                self._publisher.publish(
+                    build_quality_failed_from_reason(
+                        reason,
+                        evaluation.evaluated_at,
+                        evaluation_id=evaluation.evaluation_id,
+                        dataset_id=evaluation.event.dataset_id,
+                        scope_id=evaluation.event.batch_id,
                     )
-                    if reason.check_id:
-                        published_check_ids.add(reason.check_id)
+                )
+                if reason.check_id:
+                    published_check_ids.add(reason.check_id)
         if self._anomalies is not None and self._anomaly_config is not None:
             self._detect_anomalies(evaluation)
+
+    def _check_reaction(self, check) -> QualityStatus:
+        """Повторяет логику реакции из finalize, чтобы знать, какие проверки блокируют."""
+        if check.result is not None:
+            if check.result.status is CheckStatus.FAIL:
+                return check.spec.on_fail
+            if check.result.status is CheckStatus.UNKNOWN:
+                return check.spec.on_unknown
+            return QualityStatus.PASS
+        reaction = QualityStatus.BLOCK if check.spec.required else QualityStatus.WARN
+        code = check.code or (
+            "missing_required_check" if check.spec.required else "missing_optional_check"
+        )
+        if check.state is ExecutionStatus.SKIPPED:
+            if code in {
+                "insufficient_history",
+                "insufficient_samples",
+                "incomplete_window",
+            }:
+                reaction = check.spec.on_insufficient_history
+            elif code == "missing_schema":
+                reaction = check.spec.on_missing_schema
+        return reaction
 
     def _detect_anomalies(self, evaluation) -> None:
         """Ищет отклонения доставленного профиля относительно его допустимой истории."""
