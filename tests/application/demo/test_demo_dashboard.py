@@ -100,7 +100,9 @@ def test_api_error_retry_and_empty_state(page):
 
 def test_detail_deep_link_and_not_found(page):
     page.goto("http://application.test/#inc-041")
-    expect(page.locator("#incident-detail h2")).to_contain_text("Данные клиентов")
+    expect(page.locator("#incident-detail h2")).to_have_text(
+        "В данных клиентов выросла доля пропусков"
+    )
     expect(page.locator("#incident-detail")).to_contain_text(
         "Кандидаты причин пока не определены"
     )
