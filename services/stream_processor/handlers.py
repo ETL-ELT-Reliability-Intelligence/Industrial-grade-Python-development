@@ -153,7 +153,23 @@ class StreamEventHandler:
         profile = build_profile(event, records, evaluation.suite)
         stats = statistics_from_profile(profile)
         expected_schema = self._previous_schema(event.dataset_id, event.schema_version)
-        history = select_history(profile, self._metrics.list_profiles(event.dataset_id))
+        max_window = max(
+            (c.params.get("history_window", 10) for c in evaluation.suite.checks),
+            default=10,
+        )
+        history_limit = max(max_window * 4, 40)
+        history = select_history(
+            profile,
+            self._metrics.list_comparable_profiles(
+                event.dataset_id,
+                source_id=event.source_id,
+                granularity=event.granularity,
+                schema_version=event.schema_version,
+                stats_version=profile.stats_version,
+                config_hash=profile.config_hash,
+                limit=history_limit,
+            ),
+        )
         checks = tuple(
             prepare_check(
                 c,

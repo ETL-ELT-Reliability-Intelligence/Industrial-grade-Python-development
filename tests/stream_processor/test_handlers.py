@@ -121,6 +121,30 @@ class FakeMetrics:
     def list_profiles(self, dataset_id):
         return [p for (d, _), p in self.profiles.items() if d == dataset_id]
 
+    def list_comparable_profiles(
+        self,
+        dataset_id,
+        *,
+        source_id,
+        granularity,
+        schema_version,
+        stats_version,
+        config_hash,
+        limit=100,
+    ):
+        return [
+            p
+            for (d, _), p in self.profiles.items()
+            if d == dataset_id
+            and p.event.source_id == source_id
+            and p.event.granularity == granularity
+            and p.event.schema_version == schema_version
+            and p.stats_version == stats_version
+            and p.config_hash == config_hash
+            and p.eligible
+            and p.event.complete
+        ][:limit]
+
     def set_profile_eligible(self, dataset_id, scope_id, eligible):
         key = (dataset_id, scope_id)
         if key in self.profiles:

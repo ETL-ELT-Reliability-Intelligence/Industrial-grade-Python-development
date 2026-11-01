@@ -228,6 +228,45 @@ class PostgresMetricRepository(_PostgresRepository):
             BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows
         ]
 
+    def list_comparable_profiles(
+        self,
+        dataset_id: str,
+        *,
+        source_id: str,
+        granularity: str,
+        schema_version: int,
+        stats_version: str,
+        config_hash: str,
+        limit: int = 100,
+    ) -> list[BatchProfile]:
+        _limit(limit)
+        rows = self._connection.execute(
+            "SELECT profile FROM dataset_profiles "
+            "WHERE dataset_id = %s "
+            "AND profile->'event'->>'source_id' = %s "
+            "AND profile->'event'->>'granularity' = %s "
+            "AND profile->'event'->>'schema_version' = %s "
+            "AND profile->>'stats_version' = %s "
+            "AND profile->>'config_hash' = %s "
+            "AND (profile->>'eligible')::boolean = true "
+            "AND (profile->'event'->>'complete')::boolean IS NOT FALSE "
+            "ORDER BY profile->'event'->>'received_at' DESC, "
+            "profile->'event'->>'batch_id' DESC "
+            "LIMIT %s",
+            (
+                dataset_id,
+                source_id,
+                granularity,
+                str(schema_version),
+                stats_version,
+                config_hash,
+                limit,
+            ),
+        ).fetchall()
+        return [
+            BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows
+        ]
+
     def set_profile_eligible(
         self, dataset_id: str, scope_id: str, eligible: bool
     ) -> None:
