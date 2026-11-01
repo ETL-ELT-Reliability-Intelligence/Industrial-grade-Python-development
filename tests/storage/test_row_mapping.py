@@ -7,10 +7,10 @@ import pytest
 
 pytest.importorskip("psycopg")
 
-from contracts.metrics import MetricKind
-from contracts.quality import QualityStatus, SchemaField
-from contracts.state import PipelineRunStatus
-from storage.postgres.repositories import (
+from contracts.metrics import MetricKind  # noqa: E402
+from contracts.quality import QualityStatus, SchemaField  # noqa: E402
+from contracts.state import PipelineRunStatus  # noqa: E402
+from storage.postgres.repositories import (  # noqa: E402
     PostgresDatasetRepository, PostgresPipelineRunRepository, PostgresMetricRepository,
     PostgresQualityRepository, PostgresAnomalyRepository, PostgresUserActionRepository,
 )

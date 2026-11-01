@@ -1,0 +1,7 @@
+default_profile: standard
+retry:
+  max_attempts: 3
+  delays_seconds: [5, 15]
+policy:
+  on_fail: BLOCK
+  on_unknown: WARN

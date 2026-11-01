@@ -1,12 +1,15 @@
 """PostgreSQL implementations of the repositories in storage.repositories."""
 
 from datetime import datetime
+from contextlib import contextmanager
+import json
 from typing import Any
 
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
 from contracts.metrics import MetricKind, MetricPoint
+from contracts.evaluation import Evaluation, CheckExecution
 from contracts.quality import (
     CheckResult, QualityDecision, QualityStatus, SchemaField,
 )
@@ -201,6 +204,93 @@ def _metric(row: dict[str, Any]) -> MetricPoint:
 
 class PostgresQualityRepository(_PostgresRepository):
     """Check results and policy decisions."""
+
+    @contextmanager
+    def evaluation_lock(self, dataset_id: str, scope_id: str):
+        key = json.dumps([dataset_id, scope_id])
+        self._connection.execute("SELECT pg_advisory_lock(hashtextextended(%s, 0))", (key,))
+        try:
+            yield
+        finally:
+            self._connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
+
+    def get_evaluation(self, evaluation_id: str) -> Evaluation | None:
+        row = self._connection.execute("SELECT snapshot FROM quality_evaluations WHERE evaluation_id = %s", (evaluation_id,)).fetchone()
+        if row is None:
+            return None
+        payload = row["snapshot"]
+        records = self._connection.execute("SELECT check_id, snapshot FROM quality_executions WHERE evaluation_id = %s", (evaluation_id,)).fetchall()
+        executions = {r["check_id"]: r["snapshot"] for r in records}
+        payload["checks"] = [executions.get(c["check_id"], c) for c in payload["checks"]]
+        return Evaluation.model_validate_json(json.dumps(payload))
+
+    def save_execution(self, evaluation_id: str, execution: CheckExecution) -> None:
+        execution = CheckExecution.model_validate_json(execution.model_dump_json())
+        row = self._connection.execute(
+            "SELECT e.snapshot->'decision' AS decision, c.snapshot AS execution FROM quality_evaluations e "
+            "JOIN quality_executions c USING (evaluation_id) WHERE e.evaluation_id = %s AND c.check_id = %s",
+            (evaluation_id, execution.check_id),
+        ).fetchone()
+        if row is None or row["decision"] is not None:
+            raise ValueError("unknown or completed evaluation")
+        previous = CheckExecution.model_validate_json(json.dumps(row["execution"]))
+        if previous.spec != execution.spec or previous.observation != execution.observation or previous.constraint != execution.constraint:
+            raise ValueError("execution differs from frozen plan")
+        if previous.result is not None and previous != execution:
+            raise ValueError("completed check is immutable")
+        self._connection.execute("UPDATE quality_executions SET snapshot = %s WHERE evaluation_id = %s AND check_id = %s",
+                                 (Jsonb(execution.model_dump(mode="json")), evaluation_id, execution.check_id))
+
+    def save_evaluation(self, evaluation: Evaluation) -> None:
+        # Validate even snapshots assembled with model_copy by the runner.
+        evaluation = Evaluation.model_validate_json(evaluation.model_dump_json())
+        existing = self.get_evaluation(evaluation.evaluation_id)
+        if existing is not None:
+            if (existing.suite, existing.event, existing.evaluated_at) != (evaluation.suite, evaluation.event, evaluation.evaluated_at):
+                raise ValueError("an evaluation plan is immutable")
+            if existing.decision is not None and existing.model_copy(update={"published": evaluation.published, "delivery_attempts": evaluation.delivery_attempts}) != evaluation:
+                raise ValueError("a completed evaluation is immutable")
+        with self._connection.transaction():
+            self._ensure_dataset(evaluation.event.dataset_id)
+            self._connection.execute(
+                "INSERT INTO quality_evaluations (evaluation_id, dataset_id, scope_id, snapshot) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (evaluation_id) DO UPDATE "
+                "SET snapshot = EXCLUDED.snapshot, updated_at = now()",
+                (evaluation.evaluation_id, evaluation.event.dataset_id, evaluation.event.batch_id,
+                 Jsonb(evaluation.model_dump(mode="json"))),
+            )
+            if existing is None or not existing.prepared:
+                with self._connection.cursor() as cursor:
+                    cursor.executemany(
+                        "INSERT INTO quality_executions (evaluation_id, check_id, snapshot) VALUES (%s, %s, %s) "
+                        "ON CONFLICT (evaluation_id, check_id) DO UPDATE SET snapshot = EXCLUDED.snapshot",
+                        [(evaluation.evaluation_id, c.check_id, Jsonb(c.model_dump(mode="json"))) for c in evaluation.checks],
+                    )
+            if existing is None:
+                self._connection.execute("DELETE FROM quality_decisions WHERE dataset_id = %s AND scope_id = %s", (evaluation.event.dataset_id, evaluation.event.batch_id))
+                self._connection.execute("DELETE FROM quality_check_results WHERE dataset_id = %s AND scope_id = %s", (evaluation.event.dataset_id, evaluation.event.batch_id))
+
+    def list_evaluations(self, dataset_id: str, scope_id: str) -> list[Evaluation]:
+        rows = self._connection.execute(
+            "SELECT evaluation_id FROM quality_evaluations WHERE dataset_id = %s AND scope_id = %s ORDER BY sequence DESC",
+            (dataset_id, scope_id),
+        ).fetchall()
+        return [self.get_evaluation(row["evaluation_id"]) for row in rows]
+
+    def project_evaluation(self, evaluation: Evaluation) -> None:
+        event = evaluation.event
+        latest = self._connection.execute(
+            "SELECT evaluation_id FROM quality_evaluations WHERE dataset_id = %s AND scope_id = %s ORDER BY sequence DESC LIMIT 1",
+            (event.dataset_id, event.batch_id),
+        ).fetchone()
+        if latest["evaluation_id"] != evaluation.evaluation_id or evaluation.decision is None:
+            return
+        with self._connection.transaction():
+            self._connection.execute("DELETE FROM quality_check_results WHERE dataset_id = %s AND scope_id = %s", (event.dataset_id, event.batch_id))
+            for check in evaluation.checks:
+                if check.result is not None:
+                    self.save_check_result(check.result)
+            self.save_quality_decision(event.dataset_id, event.batch_id, evaluation.decision, evaluation.evaluated_at)
 
     def save_check_result(self, result: CheckResult) -> None:
         row = check_result_to_row(result)

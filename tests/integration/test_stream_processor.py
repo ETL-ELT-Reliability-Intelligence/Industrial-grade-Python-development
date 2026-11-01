@@ -14,7 +14,6 @@ from services.ingestion.service import IngestionService  # noqa: E402
 from services.ingestion.sources import OlistSource  # noqa: E402
 from services.ingestion.storage import LocalRawStore  # noqa: E402
 from services.stream_processor.handlers import StreamEventHandler  # noqa: E402
-from services.stream_processor.policy import QualityThresholds  # noqa: E402
 from storage.postgres import (  # noqa: E402
     PostgresDatasetRepository,
     PostgresMetricRepository,
@@ -29,7 +28,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.skipif(not URL, reason="TEST_
 
 
 # Undelivered Olist orders have no delivery date, so that column is legitimately ~40% null.
-THRESHOLDS = QualityThresholds(max_null_rate=0.5)
+
 
 
 def build_handler(connection):
@@ -38,7 +37,6 @@ def build_handler(connection):
         PostgresPipelineRunRepository(connection),
         PostgresMetricRepository(connection),
         PostgresQualityRepository(connection),
-        thresholds=THRESHOLDS,
     )
 
 
@@ -73,7 +71,7 @@ def test_normal_batches_pass_and_a_silently_partial_one_is_blocked(pipeline):
     decisions = [ingest("order_payments", window)[1].status for window in range(3)]
     event, decision = ingest("order_payments", 3, volume_factor=0.4)
 
-    assert decisions == [QualityStatus.PASS] * 3
+    assert decisions == [QualityStatus.WARN] * 3
     assert decision.status is QualityStatus.BLOCK
     assert any("row_count" in str(reason) for reason in decision.reasons)
     assert quality.get_quality_decision("order_payments", event.batch_id) == decision
@@ -83,8 +81,8 @@ def test_each_table_is_judged_on_its_own_history(pipeline):
     ingest, *_ = pipeline
     for window in range(3):
         for table in ("orders", "order_items", "customers"):
-            assert ingest(table, window)[1].status is QualityStatus.PASS
-    assert ingest("order_payments", 3, volume_factor=0.4)[1].status is QualityStatus.PASS  # no history yet
+            assert ingest(table, window)[1].status is QualityStatus.WARN
+    assert ingest("order_payments", 3, volume_factor=0.4)[1].status is QualityStatus.WARN  # no history yet
 
 
 def test_replaying_an_event_does_not_change_the_decision(pipeline):

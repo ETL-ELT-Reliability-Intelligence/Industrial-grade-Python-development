@@ -1,6 +1,7 @@
 """Usage: python -m services.stream_processor [--kafka HOST:PORT] [--database-url DSN] [--group-id ID] [--max-messages N]"""
 
 import argparse
+from pathlib import Path
 
 from storage.postgres import (
     PostgresDatasetRepository,
@@ -12,7 +13,7 @@ from storage.postgres import (
 
 from .consumer import StreamProcessorConfig, StreamProcessorRunner, create_kafka_consumer
 from .handlers import StreamEventHandler
-from .policy import QualityThresholds
+from data_quality.config import load_suites
 from .publisher import KafkaPublisher
 
 
@@ -22,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kafka", help="Kafka bootstrap servers (defaults to KAFKA_BOOTSTRAP_SERVERS or localhost:9092)")
     parser.add_argument("--group-id", help="Kafka consumer group ID (defaults to KAFKA_GROUP_ID or stream-processor)")
     parser.add_argument("--max-messages", type=int, help="Stop after processing N valid events")
+    parser.add_argument("--quality-config", type=Path, default=Path(__file__).resolve().parents[2] / "config/quality")
     return parser
 
 
@@ -32,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         kafka_bootstrap_servers=args.kafka,
         group_id=args.group_id,
     )
-    thresholds = QualityThresholds.from_env()
+    suites = load_suites(args.quality_config)
 
     with connect(config.database_url) as connection:
         handler = StreamEventHandler(
@@ -41,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
             metrics=PostgresMetricRepository(connection),
             quality=PostgresQualityRepository(connection),
             publisher=KafkaPublisher(config.kafka_bootstrap_servers),
-            thresholds=thresholds,
+            suites=suites,
         )
         consumer = create_kafka_consumer(config)
         runner = StreamProcessorRunner(consumer, handler, poll_timeout=config.poll_timeout)
