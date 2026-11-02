@@ -8,6 +8,7 @@ import json
 
 from contracts.profiles import BatchProfile
 from contracts.quality_config import PARAMETERS
+from .statistics import field_type
 
 
 def number(value):
@@ -39,6 +40,7 @@ def summarize(records, column):
         "null_rate": (len(values) - len(present)) / len(values) if values else None,
         "distinct_count": distinct,
         "distinct_ratio": distinct / len(present) if present else None,
+        "data_type": field_type(values),
     }
 
 
@@ -46,21 +48,33 @@ def build_profile(event, records, suite):
     columns = sorted({key for r in records for key in r})
     summaries = {column: summarize(records, column) for column in columns}
     checks = {}
+    summary_cache: dict[tuple[str, str | None], dict] = {}
     for spec in suite.checks:
         if spec.column is None:
             continue
         params = PARAMETERS[spec.kind].model_validate_json(json.dumps(spec.params))
-        subset = records
         condition = getattr(params, "where_column", None)
-        if condition:
+        cache_key = (spec.column, condition)
+        if cache_key in summary_cache:
+            summary = summary_cache[cache_key]
+        elif condition:
             subset = [r for r in records if r.get(condition) == params.where_value]
-        summary = summarize(subset, spec.column)
+            summary = summarize(subset, spec.column)
+            summary_cache[cache_key] = summary
+        else:
+            # Колонки может не быть в батче: это missing_column, а не сбой профилирования.
+            summary = summaries.get(spec.column, summarize(records, spec.column))
+        summary = dict(summary)
         summary["missing_column"] = spec.column not in columns or bool(
             condition and condition not in columns
         )
         if spec.kind.value == "distribution":
             counts = Counter()
             errors = 0
+            if condition:
+                subset = [r for r in records if r.get(condition) == params.where_value]
+            else:
+                subset = records
             for record in subset:
                 value = record.get(spec.column)
                 if value is None:
@@ -83,6 +97,10 @@ def build_profile(event, records, suite):
             invalid = evaluated = 0
             if params.other_column and params.other_column not in columns:
                 summary["missing_column"] = True
+            if condition:
+                subset = [r for r in records if r.get(condition) == params.where_value]
+            else:
+                subset = records
             for record in subset:
                 value = record.get(spec.column)
                 other = record.get(params.other_column) if params.other_column else None

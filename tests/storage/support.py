@@ -51,6 +51,6 @@ class DatabaseTestCase(unittest.TestCase):
     def setUp(self):
         """Remove all rows; dependent tables are truncated through foreign keys."""
         self.connection.execute(
-            "TRUNCATE datasets, pipeline_runs, incidents, lineage_nodes, "
+            "TRUNCATE datasets, pipeline_runs, dataset_profiles, incidents, lineage_nodes, "
             "ml_model_metadata, user_actions CASCADE"
         )

@@ -1,0 +1,16 @@
+detector: robust-z
+version: v1
+min_observations: 3
+metrics:
+  row_count:
+    threshold_z: 4.0
+    absolute_tolerance: 1.0
+    relative_tolerance: 0.05
+  null_rate:
+    threshold_z: 4.0
+    absolute_tolerance: 0.02
+    relative_tolerance: 0.05
+  distinct_ratio:
+    threshold_z: 4.0
+    absolute_tolerance: 0.02
+    relative_tolerance: 0.05

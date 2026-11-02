@@ -3,6 +3,7 @@ import json
 
 
 from contracts.events import (
+    AnomalyDetectedEvent,
     DataQualityFailedEvent,
     DatasetIngestedEvent,
     PipelineFailedEvent,
@@ -19,7 +20,11 @@ from contracts.quality import (
     QualityStatus,
     SchemaField,
 )
-from contracts.state import Batch, PipelineRun, PipelineRunStatus
+from contracts.state import Anomaly, Batch, PipelineRun, PipelineRunStatus
+from services.stream_processor.anomaly import (
+    DEFAULT_ANOMALY_CONFIG_PATH,
+    load_anomaly_config,
+)
 from services.stream_processor.handlers import StreamEventHandler
 from contextlib import nullcontext
 from contracts.evaluation import Evaluation
@@ -144,8 +149,35 @@ class FakeMetrics:
     def save_profile(self, profile):
         self.profiles[(profile.event.dataset_id, profile.event.batch_id)] = profile
 
+    def get_profile(self, dataset_id, scope_id):
+        return self.profiles.get((dataset_id, scope_id))
+
     def list_profiles(self, dataset_id):
         return [p for (d, _), p in self.profiles.items() if d == dataset_id]
+
+    def list_comparable_profiles(
+        self,
+        dataset_id,
+        *,
+        source_id,
+        granularity,
+        schema_version,
+        stats_version,
+        config_hash,
+        limit=100,
+    ):
+        return [
+            p
+            for (d, _), p in self.profiles.items()
+            if d == dataset_id
+            and p.event.source_id == source_id
+            and p.event.granularity == granularity
+            and p.event.schema_version == schema_version
+            and p.stats_version == stats_version
+            and p.config_hash == config_hash
+            and p.eligible
+            and p.event.complete
+        ][:limit]
 
     def set_profile_eligible(self, dataset_id, scope_id, eligible):
         key = (dataset_id, scope_id)
@@ -177,6 +209,28 @@ class FakeMetrics:
             if p.dataset_id == dataset_id and p.metric is metric and p.column == column
         ]
         items.sort(key=lambda p: (p.observed_at, p.scope_id), reverse=True)
+        return items[:limit]
+
+
+class FakeAnomalies:
+    def __init__(self) -> None:
+        self.items: dict[str, Anomaly] = {}
+
+    def save_anomaly(self, anomaly: Anomaly) -> None:
+        self.items.setdefault(anomaly.anomaly_id, anomaly)
+
+    def get_anomaly(self, anomaly_id: str) -> Anomaly | None:
+        return self.items.get(anomaly_id)
+
+    def list_anomalies(
+        self, dataset_id: str | None = None, limit: int = 100
+    ) -> list[Anomaly]:
+        items = [
+            a
+            for a in self.items.values()
+            if dataset_id is None or a.dataset_id == dataset_id
+        ]
+        items.sort(key=lambda a: (a.detected_at, a.anomaly_id), reverse=True)
         return items[:limit]
 
 
@@ -313,7 +367,12 @@ def test_suite(dataset_id="orders"):
 test_suite.__test__ = False
 
 
-def make_handler(clock=lambda: NOW + MINUTE, suites=None):
+def make_handler(
+    clock=lambda: NOW + MINUTE,
+    suites=None,
+    anomalies=None,
+    anomaly_config=None,
+):
     datasets = FakeDatasets()
     pipelines = FakePipelines()
     metrics = FakeMetrics()
@@ -328,6 +387,8 @@ def make_handler(clock=lambda: NOW + MINUTE, suites=None):
         suites=suites if suites is not None else {"orders": test_suite()},
         clock=clock,
         sleep=lambda _: None,
+        anomalies=anomalies,
+        anomaly_config=anomaly_config,
     )
     return handler, datasets, pipelines, metrics, quality, publisher
 
@@ -491,7 +552,10 @@ def test_event_without_raw_uri_saves_batch_only():
     assert metrics.list_metric_history("orders", MetricKind.ROW_COUNT) == []
     assert quality.list_check_results("orders", "b1") == []
     assert quality.get_quality_decision("orders", "b1").status is QualityStatus.BLOCK
-    assert publisher.events == []
+    assert len(publisher.events) >= 1
+    event_0 = publisher.events[0]
+    assert isinstance(event_0, DataQualityFailedEvent)
+    assert event_0.check_id.startswith("orders.")
 
 
 def test_pipeline_events_update_pipeline_runs_and_keep_terminal_state():
@@ -539,7 +603,7 @@ def test_pipeline_events_update_pipeline_runs_and_keep_terminal_state():
     assert run2.error == "boom"
 
 
-def test_unhandled_event_is_ignored():
+def test_schema_changed_is_documented_as_unhandled():
     handler, datasets, pipelines, _, _, _ = make_handler()
     handler.handle(
         SchemaChangedEvent(
@@ -552,3 +616,128 @@ def test_unhandled_event_is_ignored():
     )
     assert datasets.datasets == set()
     assert pipelines.runs == {}
+
+
+def test_block_from_missing_raw_uri_publishes_quality_failed_event(tmp_path):
+    handler, _, _, _, quality, publisher = make_handler()
+    event = DatasetIngestedEvent(
+        dataset_id="orders",
+        batch_id="b1",
+        records=10,
+        received_at=NOW,
+        schema_version=1,
+        raw_uri=None,
+    )
+
+    handler.handle(event)
+
+    decision = quality.get_quality_decision("orders", "b1")
+    assert decision.status is QualityStatus.BLOCK
+    assert len(publisher.events) >= 1
+    event_0 = publisher.events[0]
+    assert isinstance(event_0, DataQualityFailedEvent)
+    assert event_0.check_id.startswith("orders.")
+
+
+def test_fail_and_additional_reason_no_duplicate(tmp_path):
+    handler, _, _, _, _, publisher = make_handler()
+    rows_10 = [{"id": i, "amount": float(i)} for i in range(10)]
+    for idx in range(1, 4):
+        uri = write_batch(tmp_path, f"b{idx}", rows_10)
+        handler.handle(
+            DatasetIngestedEvent(
+                dataset_id="orders",
+                batch_id=f"b{idx}",
+                records=10,
+                received_at=NOW + idx * MINUTE,
+                schema_version=1,
+                raw_uri=uri,
+            )
+        )
+
+    uri_drop = write_batch(tmp_path, "b4", rows_10[:4])
+    handler.handle(
+        DatasetIngestedEvent(
+            dataset_id="orders",
+            batch_id="b4",
+            records=4,
+            received_at=NOW + 4 * MINUTE,
+            schema_version=1,
+            raw_uri=uri_drop,
+        )
+    )
+
+    check_ids_published = [e.check_id for e in publisher.events]
+    assert len(check_ids_published) == len(set(check_ids_published))
+    assert len(publisher.events) == 1
+    assert publisher.events[0].check_id == "orders.row_count"
+
+
+def test_redelivered_decision_publishes_event_only_once(tmp_path):
+    handler, _, _, _, _, publisher = make_handler()
+    event = DatasetIngestedEvent(
+        dataset_id="orders",
+        batch_id="b1",
+        records=10,
+        received_at=NOW,
+        schema_version=1,
+        raw_uri=None,
+    )
+
+    handler.handle(event)
+    first_count = len(publisher.events)
+    assert first_count > 0
+
+    handler.handle(event)
+    second_count = len(publisher.events)
+
+    assert second_count == first_count
+
+
+def test_row_count_drop_is_saved_and_published_once(tmp_path):
+    anomalies = FakeAnomalies()
+    handler, _, _, _, _, publisher = make_handler(
+        anomalies=anomalies,
+        anomaly_config=load_anomaly_config(DEFAULT_ANOMALY_CONFIG_PATH),
+    )
+    rows_10 = [{"id": i, "amount": float(i)} for i in range(10)]
+    for idx in range(1, 4):
+        uri = write_batch(tmp_path, f"b{idx}", rows_10)
+        handler.handle(
+            DatasetIngestedEvent(
+                dataset_id="orders",
+                batch_id=f"b{idx}",
+                records=10,
+                received_at=NOW + idx * MINUTE,
+                schema_version=1,
+                raw_uri=uri,
+            )
+        )
+
+    uri_drop = write_batch(tmp_path, "b4", rows_10[:4])
+    drop = DatasetIngestedEvent(
+        dataset_id="orders",
+        batch_id="b4",
+        records=4,
+        received_at=NOW + 4 * MINUTE,
+        schema_version=1,
+        raw_uri=uri_drop,
+    )
+    handler.handle(drop)
+
+    saved = anomalies.list_anomalies("orders")
+    assert [a.metric for a in saved] == ["row_count"]
+    assert 0 < saved[0].score <= 1.0
+    published = [
+        e for e in publisher.events if isinstance(e, AnomalyDetectedEvent)
+    ]
+    assert len(published) == 1
+    assert published[0].anomaly_id == saved[0].anomaly_id
+
+    # Повторная доставка того же батча не создаёт новых аномалий и событий.
+    handler.handle(drop)
+    assert len(anomalies.list_anomalies("orders")) == 1
+    assert (
+        len([e for e in publisher.events if isinstance(e, AnomalyDetectedEvent)])
+        == 1
+    )

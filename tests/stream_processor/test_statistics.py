@@ -1,4 +1,4 @@
-from services.stream_processor.statistics import compute_statistics
+from services.stream_processor.statistics import compute_statistics, statistics_from_profile
 
 RECORDS = [
     {"id": 1, "amount": 10.5, "name": "a", "active": True, "comment": None},
@@ -60,3 +60,73 @@ def test_unhashable_values_are_counted_by_their_json_form():
     statistics = compute_statistics([{"tags": ["a"]}, {"tags": ["a"]}, {"tags": ["b"]}])
 
     assert statistics.distinct_counts["tags"] == 2
+
+
+def test_statistics_from_profile_empty_batch():
+    profile = type("Profile", (), {
+        "row_count": 0,
+        "columns": {},
+    })()
+    stats = statistics_from_profile(profile)
+
+    assert stats.row_count == 0
+    assert stats.schema == ()
+    assert stats.null_rates == {}
+    assert stats.distinct_counts == {}
+
+
+def test_statistics_from_profile_with_nulls():
+    profile = type("Profile", (), {
+        "row_count": 2,
+        "columns": {
+            "id": {
+                "null_rate": 0.0,
+                "distinct_count": 2,
+                "data_type": "integer",
+            },
+            "amount": {
+                "null_rate": 0.5,
+                "distinct_count": 1,
+                "data_type": "number",
+            },
+        },
+    })()
+    stats = statistics_from_profile(profile)
+
+    assert stats.row_count == 2
+    assert stats.null_rates == {"id": 0.0, "amount": 0.5}
+    assert stats.distinct_counts == {"id": 2, "amount": 1}
+    assert stats.schema[0].name == "amount"
+    assert stats.schema[0].data_type == "number"
+    assert stats.schema[1].name == "id"
+    assert stats.schema[1].data_type == "integer"
+
+
+def test_statistics_from_profile_different_types():
+    profile = type("Profile", (), {
+        "row_count": 3,
+        "columns": {
+            "bool_col": {
+                "null_rate": 0.0,
+                "distinct_count": 1,
+                "data_type": "boolean",
+            },
+            "str_col": {
+                "null_rate": None,
+                "distinct_count": 2,
+                "data_type": "string",
+            },
+            "unknown_col": {
+                "null_rate": 1.0,
+                "distinct_count": 0,
+                "data_type": "unknown",
+            },
+        },
+    })()
+    stats = statistics_from_profile(profile)
+
+    assert stats.row_count == 3
+    assert len(stats.schema) == 3
+    assert stats.null_rates["unknown_col"] == 1.0
+    assert stats.null_rates["str_col"] is None
+    assert stats.distinct_counts["bool_col"] == 1

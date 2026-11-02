@@ -73,7 +73,29 @@ class MetricRepository(FeatureRepository, Protocol):
 
     def save_profile(self, profile: BatchProfile) -> None: ...
 
+    def get_profile(self, dataset_id: str, scope_id: str) -> BatchProfile | None: ...
+
     def list_profiles(self, dataset_id: str) -> list[BatchProfile]: ...
+
+    def list_comparable_profiles(
+        self,
+        dataset_id: str,
+        *,
+        source_id: str,
+        granularity: str,
+        schema_version: int,
+        stats_version: str,
+        config_hash: str,
+        limit: int = 100,
+    ) -> list[BatchProfile]:
+        """Return comparable profiles, newest first, bounded by `limit`.
+
+        Matches the identity used by history selection: source_id, granularity,
+        schema_version, stats_version and config_hash.  Only eligible profiles
+        with `complete` not explicitly false are returned.  Period windowing and
+        de-duplication stay in data_quality.history.select_history.
+        """
+        ...
 
     def set_profile_eligible(
         self, dataset_id: str, scope_id: str, eligible: bool

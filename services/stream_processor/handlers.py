@@ -17,10 +17,13 @@ from contracts.events import (
 from contracts.metrics import MetricKind, MetricPoint
 from contracts.quality import (
     CheckStatus,
+    QualityStatus,
     SchemaField,
 )
+from contracts.evaluation import ExecutionStatus
 from contracts.state import Batch, PipelineRun, PipelineRunStatus
 from storage.repositories import (
+    AnomalyRepository,
     DatasetRepository,
     MetricRepository,
     PipelineRunRepository,
@@ -29,16 +32,31 @@ from storage.repositories import (
 
 from data_quality.config import load_suites, CheckSuite
 from data_quality.execution import prepare_check
+from .anomaly import AnomalyConfig, detect_anomalies
 from .evaluation import EvaluationRunner, PreparedChecks
-from .publisher import EventPublisher, NoOpPublisher, build_quality_failed_event
+from .publisher import (
+    EventPublisher,
+    NoOpPublisher,
+    build_anomaly_event,
+    build_quality_failed_event,
+    build_quality_failed_from_reason,
+)
 from .raw import read_raw
-from .statistics import DatasetStatistics, compute_statistics
-
+from .statistics import DatasetStatistics, statistics_from_profile
 from .profiling import build_profile
 from .feature_accumulation import FeatureAccumulator
 from data_quality.history import select_history, eligible
 
 STATS_VERSION = "v2"
+
+
+def _history_limit(evaluation) -> int:
+    """Ограничивает историю одинаково для проверок и детекции аномалий."""
+    max_window = max(
+        (c.params.get("history_window", 10) for c in evaluation.suite.checks),
+        default=10,
+    )
+    return max(max_window * 4, 40)
 
 
 class StreamEventHandler:
@@ -54,6 +72,9 @@ class StreamEventHandler:
         suites: Mapping[str, CheckSuite] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         sleep: Callable[[float], None] = time.sleep,
+        *,
+        anomalies: AnomalyRepository | None = None,
+        anomaly_config: AnomalyConfig | None = None,
         feature_definitions=None,
     ) -> None:
         self._datasets = datasets
@@ -68,10 +89,16 @@ class StreamEventHandler:
         )
         self._clock = clock
         self._runner = EvaluationRunner(quality, clock=clock, sleep=sleep)
+        self._anomalies = anomalies
+        self._anomaly_config = anomaly_config
         self._features = FeatureAccumulator(metrics, clock, feature_definitions)
 
     def handle(self, event: Event) -> None:
-        """Dispatch a parsed event to its specific handler; ignore unhandled types."""
+        """Dispatch a parsed event to its specific handler; ignore unhandled types.
+
+        SchemaChangedEvent is intentionally not handled: the schema comes from raw
+        data batches (dataset.ingested) and is captured by _prepare via build_profile.
+        """
         if isinstance(event, DatasetIngestedEvent):
             self.handle_dataset_ingested(event)
         elif isinstance(event, PipelineEvent):
@@ -104,6 +131,7 @@ class StreamEventHandler:
                 evaluation.event.batch_id,
                 eligible(evaluation),
             )
+        published_check_ids: set[str] = set()
         for check in evaluation.checks:
             if check.result is not None and check.result.status is CheckStatus.FAIL:
                 self._publisher.publish(
@@ -113,6 +141,78 @@ class StreamEventHandler:
                         evaluation_id=evaluation.evaluation_id,
                     )
                 )
+                published_check_ids.add(check.result.check_id)
+        if evaluation.decision and evaluation.decision.status is QualityStatus.BLOCK:
+            blocking = {
+                check.check_id
+                for check in evaluation.checks
+                if self._check_reaction(check) is QualityStatus.BLOCK
+            }
+            for reason in evaluation.decision.reasons:
+                # Публикуем только блокирующие причины, ещё не покрытые FAIL-событием.
+                if (
+                    reason.check_id not in blocking
+                    or reason.check_id in published_check_ids
+                ):
+                    continue
+                self._publisher.publish(
+                    build_quality_failed_from_reason(
+                        reason,
+                        evaluation.evaluated_at,
+                        evaluation_id=evaluation.evaluation_id,
+                        dataset_id=evaluation.event.dataset_id,
+                        scope_id=evaluation.event.batch_id,
+                    )
+                )
+                if reason.check_id:
+                    published_check_ids.add(reason.check_id)
+        if self._anomalies is not None and self._anomaly_config is not None:
+            self._detect_anomalies(evaluation)
+
+    def _check_reaction(self, check) -> QualityStatus:
+        """Повторяет логику реакции из finalize, чтобы знать, какие проверки блокируют."""
+        if check.result is not None:
+            if check.result.status is CheckStatus.FAIL:
+                return check.spec.on_fail
+            if check.result.status is CheckStatus.UNKNOWN:
+                return check.spec.on_unknown
+            return QualityStatus.PASS
+        reaction = QualityStatus.BLOCK if check.spec.required else QualityStatus.WARN
+        code = check.code or (
+            "missing_required_check" if check.spec.required else "missing_optional_check"
+        )
+        if check.state is ExecutionStatus.SKIPPED:
+            if code in {
+                "insufficient_history",
+                "insufficient_samples",
+                "incomplete_window",
+            }:
+                reaction = check.spec.on_insufficient_history
+            elif code == "missing_schema":
+                reaction = check.spec.on_missing_schema
+        return reaction
+
+    def _detect_anomalies(self, evaluation) -> None:
+        """Ищет отклонения доставленного профиля относительно его допустимой истории."""
+        event = evaluation.event
+        profile = self._metrics.get_profile(event.dataset_id, event.batch_id)
+        if profile is None:
+            return
+        history = select_history(
+            profile,
+            self._metrics.list_comparable_profiles(
+                event.dataset_id,
+                source_id=event.source_id,
+                granularity=event.granularity,
+                schema_version=event.schema_version,
+                stats_version=profile.stats_version,
+                config_hash=profile.config_hash,
+                limit=_history_limit(evaluation),
+            ),
+        )
+        for anomaly in detect_anomalies(profile, history, self._anomaly_config):
+            self._anomalies.save_anomaly(anomaly)
+            self._publisher.publish(build_anomaly_event(anomaly))
 
     def _prepare(self, evaluation, *, capture=None):
         event = evaluation.event
@@ -132,10 +232,22 @@ class StreamEventHandler:
         records = read_raw(event.raw_uri)
         if capture is not None:
             capture[:] = [records]
-        stats = compute_statistics(records)
         profile = build_profile(event, records, evaluation.suite)
+        stats = statistics_from_profile(profile)
         expected_schema = self._previous_schema(event.dataset_id, event.schema_version)
-        history = select_history(profile, self._metrics.list_profiles(event.dataset_id))
+        history_limit = _history_limit(evaluation)
+        history = select_history(
+            profile,
+            self._metrics.list_comparable_profiles(
+                event.dataset_id,
+                source_id=event.source_id,
+                granularity=event.granularity,
+                schema_version=event.schema_version,
+                stats_version=profile.stats_version,
+                config_hash=profile.config_hash,
+                limit=history_limit,
+            ),
+        )
         checks = tuple(
             prepare_check(
                 c,
@@ -151,16 +263,6 @@ class StreamEventHandler:
         self._metrics.save_profile(profile)
         self._datasets.save_schema(
             event.dataset_id, event.schema_version, stats.schema, event.received_at
-        )
-        self._datasets.upsert_batch(
-            Batch(
-                dataset_id=event.dataset_id,
-                batch_id=event.batch_id,
-                records=stats.row_count,
-                received_at=event.received_at,
-                schema_version=event.schema_version,
-                object_key=event.raw_uri,
-            )
         )
         self._save_metrics(event, stats, profile)
         return PreparedChecks(checks, getattr(records, "sha256", None))
