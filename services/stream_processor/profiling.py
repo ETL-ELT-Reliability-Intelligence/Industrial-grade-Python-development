@@ -62,7 +62,8 @@ def build_profile(event, records, suite):
             summary = summarize(subset, spec.column)
             summary_cache[cache_key] = summary
         else:
-            summary = summaries[spec.column]
+            # Колонки может не быть в батче: это missing_column, а не сбой профилирования.
+            summary = summaries.get(spec.column, summarize(records, spec.column))
         summary = dict(summary)
         summary["missing_column"] = spec.column not in columns or bool(
             condition and condition not in columns
