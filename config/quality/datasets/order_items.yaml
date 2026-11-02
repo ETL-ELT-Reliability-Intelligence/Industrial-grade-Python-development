@@ -1,0 +1,62 @@
+dataset_id: order_items
+version: 2
+profile: standard
+checks:
+  price.non_negative:
+    kind: value_rule
+    column: price
+    params:
+      rule: non_negative
+    on_fail: BLOCK
+  price.distribution:
+    kind: distribution
+    column: price
+    params:
+      data_type: numeric
+      bins:
+      - 0
+      - 5
+      - 10
+      - 25
+      - 50
+      - 100
+      - 250
+      - 500
+      - 1000
+      - 5000
+    on_fail: WARN
+  freight_value.non_negative:
+    kind: value_rule
+    column: freight_value
+    params:
+      rule: non_negative
+    on_fail: BLOCK
+  freight_value.distribution:
+    kind: distribution
+    column: freight_value
+    params:
+      data_type: numeric
+      bins:
+      - 0
+      - 5
+      - 10
+      - 25
+      - 50
+      - 100
+      - 250
+      - 500
+      - 1000
+      - 5000
+    on_fail: WARN
+  price.null_growth:
+    kind: null_rate
+    column: price
+    params:
+      mode: historical
+    on_fail: WARN
+  freight_value.null_growth:
+    kind: null_rate
+    column: freight_value
+    params:
+      mode: historical
+    on_fail: WARN

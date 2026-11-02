@@ -1,7 +1,12 @@
 from datetime import datetime, timezone
 from typing import Callable
 
-from contracts.events import DatasetIngestedEvent, Event, SchemaChangedEvent, parse_event
+from contracts.events import (
+    DatasetIngestedEvent,
+    Event,
+    SchemaChangedEvent,
+    parse_event,
+)
 
 from .normalize import column_names, schema_fingerprint, validate
 from .publisher import EventPublisher
@@ -37,7 +42,14 @@ class IngestionService:
         self._publisher = publisher
         self._clock = clock
 
-    def ingest(self, source: Source, run_id: str | None = None) -> DatasetIngestedEvent:
+    def ingest(
+        self,
+        source: Source,
+        run_id: str | None = None,
+        *,
+        period_start=None,
+        period_end=None,
+    ) -> DatasetIngestedEvent:
         if run_id is not None:
             committed = self._store.load_run(source.dataset_id, run_id)
             if committed is not None:
@@ -78,11 +90,20 @@ class IngestionService:
             received_at=received_at,
             schema_version=version,
             raw_uri=raw_uri,
+            source_id=batch.source_id,
+            granularity="hour" if period_start is not None else batch.granularity,
+            period_start=period_start
+            if period_start is not None
+            else batch.period_start,
+            period_end=period_end if period_end is not None else batch.period_end,
+            complete=batch.complete,
         )
         events.append(ingested)
 
         if run_id is not None:
-            self._store.save_run(batch.dataset_id, run_id, [e.model_dump_json() for e in events])
+            self._store.save_run(
+                batch.dataset_id, run_id, [e.model_dump_json() for e in events]
+            )
         self._publish_all(events)
         return ingested
 

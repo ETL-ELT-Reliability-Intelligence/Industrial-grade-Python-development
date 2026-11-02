@@ -1,119 +1,70 @@
-# Детерминированные проверки качества
+# Проверки качества данных
 
-`data_quality` — общая библиотека для batch- и stream-компонентов.
-Она принимает модели из `contracts.quality`, не обращается к источникам,
-не читает системные часы и не сохраняет результаты. Контракты используют Pydantic v2.
-Модели создаются с именованными аргументами; они неизменяемы, строго проверяют типы,
-запрещают лишние поля и проверяют значения по умолчанию. Ошибки контракта вызывают
-`pydantic.ValidationError` (подкласс `ValueError`).
+Дополнительно накапливаются [неизменяемые профили признаков партий](feature_profiles.md)
+для будущего ML. Они независимы от порогов проверок и не меняют решение о качестве.
 
-## Проверки
+stream_processor читает raw, рассчитывает статистику и профили; data_quality формирует
+ограничения, исполняет проверки и агрегирует решение. Проверка свежести полностью удалена.
+Временные метки нужны для истории, периодов и аудита, но не для проверки возраста данных.
 
-Все функции принимают `observation`, `constraint`, обязательный именованный
-`check_id` и необязательный `context`. Возвращается `CheckResult` с исходными
-наблюдением, ограничением и контекстом.
+## Алгоритмы
 
-| Функция | Условие PASS | Причины FAIL |
-| --- | --- | --- |
-| `check_freshness` | Возраст на момент `evaluated_at` не превышает `max_age` | `threshold_exceeded` |
-| `check_null_rate` | Доля null не превышает `max_null_rate` | `threshold_exceeded` |
-| `check_row_count` | Количество находится внутри включительных min/max | `below_minimum`, `above_maximum` |
-| `check_schema` | Ожидаемые поля присутствуют, типы совпадают, дополнительные поля разрешены либо отсутствуют | `schema_mismatch` |
+- **Объём:** медиана количества строк ± ширина. Ширина — максимум из
+  mad_multiplier × 1.4826 × MAD, relative_tolerance × median, absolute_tolerance.
+  Нижняя целая граница округляется вверх и ограничивается нулём, верхняя — вниз.
+- **Пропуски:** историческая медиана доли плюс максимум из устойчивого разброса,
+  min_increase и поправки на размер текущей выборки
+  3 × sqrt(max(p × (1-p), 1/n) / n). Верхняя граница ограничена единицей.
+  Это эвристический защитный допуск, не p-value. Можно отдельно задать fixed-порог.
+  У даты доставки выборка ограничена статусом delivered.
+- **Кардинальность:** distinct_count не включает null; distinct_ratio делится на
+  non_null_count. Сравнение только с сопоставимым числом непустых значений.
+  Для count и ratio рассчитываются медиана и допуск; score — максимум нормированных
+  абсолютных отклонений. Score > 1 означает FAIL. Это не проверка уникальности.
+- **Распределение:** Jensen–Shannon distance с логарифмом по основанию 2, диапазон [0, 1].
+  Числа попадают в интервалы фиксированных границ YAML, включая нижний и верхний хвосты.
+  Значение на границе попадает в интервал справа. Категории сравниваются по объединению
+  ключей, поэтому новые значения не теряются. Эталон — среднее долей исторических batch
+  с одинаковым весом каждого batch. Null исключаются и проверяются отдельно.
+- **Правила значений:** неотрицательные денежные значения, корректные ISO-даты,
+  доставка не раньше покупки. Сохраняются число проверенных значений, нарушений и их доля.
+- **Схема:** проверка набора полей и типов по явному или сохранённому эталону.
 
-Успешная проверка возвращает код `requirement_met`. Отсутствующее наблюдение
-(`None`) даёт `UNKNOWN` с кодом `missing_observation`. Ноль строк, нулевая
-доля null и пустая схема — доступные наблюдения, которые проверяются обычно.
-Для пустой выборки вызывающий компонент передаёт null rate как `None`, если
-доля не определена. Ошибки входных значений отклоняются валидацией контрактов.
+Нормальное изменение числа строк может не менять распределение. Малые выборки, полностью
+пустые колонки и ошибки преобразования не превращаются в PASS. Числовое преобразование
+не изменяет raw и не применяется автоматически к идентификаторам или почтовым кодам.
 
-Freshness использует разницу UTC-моментов переданных дат. Все границы
-включительны. Схема плоская, порядок полей не важен, имена и типы сравниваются
-точно, с учётом регистра. Нормализация типов — обязанность вызывающего кода.
-Все расхождения схемы возвращаются в `details`, отсортированных по имени поля:
-`missing_field`, `unexpected_field`, `type_mismatch`.
+## Исполнение и хранение
 
-## Policy
+CheckStatus: PASS / FAIL / UNKNOWN. ExecutionStatus: PENDING / RUNNING / COMPLETED /
+SKIPPED / ERROR. QualityStatus: PASS / WARN / BLOCK, приоритет BLOCK > WARN > PASS.
+Отсутствие обязательного результата блокирует оценку, кроме настроенных случаев нехватки
+истории/выборки, неполного окна и отсутствия эталона схемы.
 
-`evaluate_quality(results, rules=())` принимает iterable результатов и настроек
-`PolicyRule`. Настройки сопоставляются по `check_id`:
+EvaluationRunner сохраняет план до чтения raw, затем наблюдения, ограничения и baseline:
+batch IDs, версию статистики, хеш конфигурации и параметры рассчитанного эталона. Для
+выполненных проверок эталон также включается в details результата и доступен через API.
+Повтор события использует сохранённую оценку; новая переоценка получает отдельный ID.
 
-- PASS всегда остаётся PASS.
-- FAIL по умолчанию даёт BLOCK; `on_fail` может изменить реакцию на WARN.
-- UNKNOWN по умолчанию даёт WARN; `on_unknown` может изменить реакцию на BLOCK.
-- Итог определяется приоритетом BLOCK > WARN > PASS.
-- Пустой набор даёт WARN с причиной `no_checks`.
+Профили dataset_profiles содержат событие с периодом, скалярные сводки, частоты и признак
+пригодности для эталона. Они записываются до исполнения как непригодные и допускаются
+после успешного завершения доступных проверок. Первые WARN из-за недостатка истории
+не мешают накоплению эталона. Результат FAIL даже с политикой WARN исключает профиль.
+Скалярные метрики: row_count, null_count, non_null_count, null_rate, distinct_count, distinct_ratio.
 
-Повторяющиеся check_id внутри результатов или настроек вызывают `ValueError`.
-Неиспользованные настройки допустимы; для результата без настройки действуют
-значения по умолчанию. Причины решения сохраняют порядок результатов,
-ссылаются на check_id и объясняют применённую реакцию. Policy не пересчитывает
-метрики и не исполняет решение.
+Сезонность не моделируется. Olist запускается вручную по месячным окнам, mock — каждый час
+с отдельным dataset mock_orders. Повтор одного месяца не становится новым наблюдением.
+Полнота окна — метаданные источника, а не предположение по количеству строк.
 
-Вызывающий компонент собирает полный набор результатов для одной области
-оценки. Policy не сопоставляет окна, не проверяет полноту ожидаемого набора
-и не ждёт запаздывающие результаты. Контекст передаётся проверками без изменений.
+## Проверка изменений
 
-## Пример на готовых наблюдениях
-
-```python
-from datetime import datetime, timedelta, timezone
-
-from contracts.quality import (
-    FreshnessConstraint, FreshnessObservation,
-    NullRateConstraint, NullRateObservation, PolicyRule, QualityContext,
-    QualityStatus, RowCountConstraint, RowCountObservation,
-    SchemaConstraint, SchemaField, SchemaObservation,
-)
-from data_quality.checks import (
-    check_freshness, check_null_rate, check_row_count, check_schema,
-)
-from data_quality.policies import evaluate_quality
-
-context = QualityContext(dataset_id="orders", scope_id="batch-42")
-evaluated_at = datetime(2026, 10, 4, 12, tzinfo=timezone.utc)
-fields = (
-    SchemaField(name="id", data_type="integer"),
-    SchemaField(name="comment", data_type="string"),
-)
-
-results = [
-    check_freshness(
-        FreshnessObservation(
-            last_updated_at=evaluated_at - timedelta(minutes=5), evaluated_at=evaluated_at,
-        ),
-        FreshnessConstraint(max_age=timedelta(minutes=10)),
-        check_id="orders.freshness", context=context,
-    ),
-    check_null_rate(
-        NullRateObservation(null_rate=0.15), NullRateConstraint(max_null_rate=0.1),
-        check_id="orders.comment.null_rate",
-        context=QualityContext(dataset_id="orders", scope_id="batch-42", column="comment"),
-    ),
-    check_row_count(
-        RowCountObservation(row_count=100), RowCountConstraint(min_count=1),
-        check_id="orders.row_count", context=context,
-    ),
-    check_schema(
-        SchemaObservation(fields=fields), SchemaConstraint(fields=fields),
-        check_id="orders.schema", context=context,
-    ),
-]
-decision = evaluate_quality(
-    results,
-    [PolicyRule(check_id="orders.comment.null_rate", on_fail=QualityStatus.WARN)],
-)
-assert decision.status is QualityStatus.WARN
+```sh
+python -m pytest tests/data_quality tests/contracts tests/stream_processor tests/storage -q
 ```
 
-Тот же вызов доступен любому компоненту, подготовившему эти наблюдения.
-Проверки не определяют расписание, происхождение порога или дальнейшую
-маршрутизацию данных.
+Тесты покрывают потерю объёма, MAD, рост пропусков с нулевой базы, условную выборку,
+кардинальность, изменение долей, новые категории, хвосты числовых распределений, ошибки
+преобразования, отрицательные значения, даты, повторы периодов и bootstrap эталона.
+Для интеграции с PostgreSQL нужна отдельная TEST_DATABASE_URL.
 
-## Тесты
-
-Тесты повторяют структуру пакетов проекта: `tests/contracts/`,
-`tests/data_quality/checks/` и `tests/data_quality/policies/`.
-Общее поведение проверок покрывается в `checks/test_common.py`.
-
-Из корня проекта: `python -m pytest -q`.
-На Windows с Python Launcher: `py -3.11 -m pytest -q`.
+[Настройки и миграция](../config/quality/README.md) · [Исполнение](stream_processor.md)

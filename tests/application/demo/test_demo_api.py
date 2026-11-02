@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from services.demo.backend.main import create_app
 from services.demo.backend.repository import DemoIncidentRepository
@@ -18,8 +18,12 @@ def test_overview_counts_match_active_incidents(client):
     items = client.get("/api/v1/incidents").json()["items"]
     active = [item for item in items if item["status"] != "resolved"]
     assert overview["active_incidents"] == len(active)
-    assert overview["critical_active_incidents"] == sum(item["severity"] == "critical" for item in active)
-    assert overview["affected_datasets"] == len({id for item in active for id in item["affected_dataset_ids"]})
+    assert overview["critical_active_incidents"] == sum(
+        item["severity"] == "critical" for item in active
+    )
+    assert overview["affected_datasets"] == len(
+        {id for item in active for id in item["affected_dataset_ids"]}
+    )
     assert overview["resolved_incidents"] == len(items) - len(active)
     assert overview["data_mode"] == "demo"
 
@@ -40,7 +44,9 @@ def test_status_filter_and_detail_agree(client, status):
 
 def test_demo_exposes_evidence_and_potential_impact(client):
     detail = client.get("/api/v1/incidents/inc-042").json()
-    observation = next(item for item in detail["observations"] if item["dataset_id"] == "orders")
+    observation = next(
+        item for item in detail["observations"] if item["dataset_id"] == "orders"
+    )
     assert observation["actual"] < observation["expected"]
     assert "orders" in detail["affected_dataset_ids"]
     assert "customer_ltv" not in detail["affected_dataset_ids"]

@@ -1,0 +1,15 @@
+checks:
+  schema:
+    kind: schema
+    on_missing_schema: WARN
+  row_count:
+    kind: row_count
+    params:
+      mode: historical
+      history_window: 10
+      min_history: 3
+      mad_multiplier: 3.0
+      relative_tolerance: 0.2
+      absolute_tolerance: 1
+    on_fail: WARN
+    on_insufficient_history: WARN

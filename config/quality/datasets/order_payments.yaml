@@ -1,0 +1,57 @@
+dataset_id: order_payments
+version: 2
+profile: standard
+checks:
+  payment_installments.distribution:
+    kind: distribution
+    column: payment_installments
+    params:
+      data_type: numeric
+      bins: [0, 1, 2, 3, 6, 12, 24]
+    on_fail: WARN
+  payment_value.non_negative:
+    kind: value_rule
+    column: payment_value
+    params:
+      rule: non_negative
+    on_fail: BLOCK
+  payment_value.distribution:
+    kind: distribution
+    column: payment_value
+    params:
+      data_type: numeric
+      bins:
+      - 0
+      - 5
+      - 10
+      - 25
+      - 50
+      - 100
+      - 250
+      - 500
+      - 1000
+      - 5000
+    on_fail: WARN
+  payment_type.distribution:
+    kind: distribution
+    column: payment_type
+    params:
+      data_type: categorical
+    on_fail: WARN
+  payment_type.cardinality:
+    kind: cardinality
+    column: payment_type
+    params: {}
+    on_fail: WARN
+  payment_value.null_growth:
+    kind: null_rate
+    column: payment_value
+    params:
+      mode: historical
+    on_fail: WARN
+  payment_type.null_growth:
+    kind: null_rate
+    column: payment_type
+    params:
+      mode: historical
+    on_fail: WARN

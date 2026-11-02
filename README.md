@@ -63,7 +63,7 @@ python -m services.ingestion --rows 100 --kafka localhost:9092 --s3-endpoint htt
 bash scripts/demo.sh        # Windows: powershell -File scripts/demo.ps1
 ```
 
-Нужен только Docker. Скрипт поднимает всё из `docker-compose.yml` и четыре раза запускает DAG `olist_ingestion`: три нормальных месяца и четвёртый, в котором upstream молча отдаёт 40% таблицы `order_payments`. Все шаги пайплайна при этом завершаются успешно, но решение о качестве для этого batch — `BLOCK`.
+Нужен только Docker. Скрипт поднимает всё из `docker-compose.yml` и четыре раза запускает DAG `olist_ingestion`: три нормальных месяца и четвёртый, в котором upstream молча отдаёт 40% таблицы `order_payments`. Все шаги пайплайна при этом завершаются успешно, но проверка объёма возвращает `FAIL`, а решение о качестве — `WARN` по текущей политике статистических проверок.
 
 ```text
 Olist CSV ─► ingestion (по таблице = датасет) ─► S3 (jsonl) + dataset.ingested в Kafka
@@ -129,3 +129,7 @@ Olist CSV ─► ingestion (по таблице = датасет) ─► S3 (jso
 
 **Не понимаем.**
 1. Номер batch считается как «число файлов + 1», два параллельных запуска могут получить один номер. Нужна ли условная запись (put-if-absent) на нашем масштабе?
+
+### Ульянова Е.А.
+
+Чтобы более не увеличивать текст основного README перешла с недельными отчётами в папку [reports/ulyanova](./reports/ulyanova).

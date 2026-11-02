@@ -22,7 +22,9 @@ PIPELINE_ID = "orders_ingestion"
 
 def _on_failure(context) -> None:
     PipelineRunReporter(_publisher()).failed(
-        PIPELINE_ID, context["run_id"], str(context.get("exception")),
+        PIPELINE_ID,
+        context["run_id"],
+        str(context.get("exception")),
         started_at=context["dag_run"].start_date,
     )
 
@@ -32,7 +34,11 @@ def _on_failure(context) -> None:
     schedule="@hourly",
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    default_args={"retries": 1, "retry_delay": timedelta(minutes=1), "on_failure_callback": _on_failure},
+    default_args={
+        "retries": 1,
+        "retry_delay": timedelta(minutes=1),
+        "on_failure_callback": _on_failure,
+    },
     tags=["ingestion"],
 )
 def orders_ingestion():
@@ -40,20 +46,30 @@ def orders_ingestion():
     def report_started() -> None:
         context = get_current_context()
         PipelineRunReporter(_publisher()).started(
-            PIPELINE_ID, context["run_id"], started_at=context["dag_run"].start_date,
+            PIPELINE_ID,
+            context["run_id"],
+            started_at=context["dag_run"].start_date,
         )
 
     @task
     def ingest() -> dict:
         factor = float(os.environ.get("MOCK_VOLUME_FACTOR", "1.0"))
         service = IngestionService(_store(), _publisher())
-        run_id = get_current_context()["run_id"]  # stable across task retries -> idempotent ingestion
-        return service.ingest(MockApiSource(volume_factor=factor), run_id=run_id).model_dump(mode="json")
+        context = get_current_context()
+        run_id = context["run_id"]  # stable across retries
+        return service.ingest(
+            MockApiSource(volume_factor=factor),
+            run_id=run_id,
+            period_start=context["data_interval_start"],
+            period_end=context["data_interval_end"],
+        ).model_dump(mode="json")
 
     @task
     def report_finished(_ingested: dict) -> None:
         context = get_current_context()
-        PipelineRunReporter(_publisher()).finished(PIPELINE_ID, context["run_id"], context["dag_run"].start_date)
+        PipelineRunReporter(_publisher()).finished(
+            PIPELINE_ID, context["run_id"], context["dag_run"].start_date
+        )
 
     report_started() >> report_finished(ingest())
 

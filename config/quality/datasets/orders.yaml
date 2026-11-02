@@ -1,0 +1,50 @@
+dataset_id: orders
+version: 2
+profile: standard
+checks:
+  order_status.distribution:
+    kind: distribution
+    column: order_status
+    params:
+      data_type: categorical
+    on_fail: WARN
+  order_status.cardinality:
+    kind: cardinality
+    column: order_status
+    params: {}
+    on_fail: WARN
+  order_status.null_growth:
+    kind: null_rate
+    column: order_status
+    params:
+      mode: historical
+    on_fail: WARN
+  purchase.valid_date:
+    kind: value_rule
+    column: order_purchase_timestamp
+    params:
+      rule: datetime
+    on_fail: BLOCK
+  delivery.valid_date:
+    kind: value_rule
+    column: order_delivered_customer_date
+    params:
+      rule: datetime
+      allow_null: true
+    on_fail: BLOCK
+  delivery.date_order:
+    kind: value_rule
+    column: order_delivered_customer_date
+    params:
+      rule: date_order
+      other_column: order_purchase_timestamp
+      allow_null: true
+    on_fail: BLOCK
+  delivery.null_growth:
+    kind: null_rate
+    column: order_delivered_customer_date
+    params:
+      mode: historical
+      where_column: order_status
+      where_value: delivered
+    on_fail: WARN

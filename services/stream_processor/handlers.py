@@ -1,6 +1,9 @@
 """Handlers translating ingestion and pipeline events into state store records."""
 
 from datetime import datetime, timezone
+from collections.abc import Mapping
+from pathlib import Path
+import time
 from typing import Callable
 
 from contracts.events import (
@@ -13,18 +16,10 @@ from contracts.events import (
 )
 from contracts.metrics import MetricKind, MetricPoint
 from contracts.quality import (
-    CheckResult,
     CheckStatus,
-    FreshnessObservation,
-    NullRateObservation,
-    QualityContext,
-    RowCountObservation,
     SchemaField,
-    SchemaObservation,
 )
 from contracts.state import Batch, PipelineRun, PipelineRunStatus
-from data_quality.checks import check_freshness, check_null_rate, check_row_count, check_schema
-from data_quality.policies import evaluate_quality
 from storage.repositories import (
     DatasetRepository,
     MetricRepository,
@@ -32,12 +27,18 @@ from storage.repositories import (
     QualityRepository,
 )
 
-from .policy import QualityThresholds
+from data_quality.config import load_suites, CheckSuite
+from data_quality.execution import prepare_check
+from .evaluation import EvaluationRunner, PreparedChecks
 from .publisher import EventPublisher, NoOpPublisher, build_quality_failed_event
 from .raw import read_raw
 from .statistics import DatasetStatistics, compute_statistics
 
-STATS_VERSION = "v1"
+from .profiling import build_profile
+from .feature_accumulation import FeatureAccumulator
+from data_quality.history import select_history, eligible
+
+STATS_VERSION = "v2"
 
 
 class StreamEventHandler:
@@ -50,16 +51,24 @@ class StreamEventHandler:
         metrics: MetricRepository,
         quality: QualityRepository,
         publisher: EventPublisher | None = None,
-        thresholds: QualityThresholds | None = None,
+        suites: Mapping[str, CheckSuite] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        sleep: Callable[[float], None] = time.sleep,
+        feature_definitions=None,
     ) -> None:
         self._datasets = datasets
         self._pipelines = pipelines
         self._metrics = metrics
         self._quality = quality
         self._publisher = publisher or NoOpPublisher()
-        self._thresholds = thresholds or QualityThresholds()
+        self._suites = (
+            suites
+            if suites is not None
+            else load_suites(Path(__file__).resolve().parents[2] / "config/quality")
+        )
         self._clock = clock
+        self._runner = EvaluationRunner(quality, clock=clock, sleep=sleep)
+        self._features = FeatureAccumulator(metrics, clock, feature_definitions)
 
     def handle(self, event: Event) -> None:
         """Dispatch a parsed event to its specific handler; ignore unhandled types."""
@@ -68,29 +77,80 @@ class StreamEventHandler:
         elif isinstance(event, PipelineEvent):
             self.handle_pipeline_event(event)
 
-    def handle_dataset_ingested(self, event: DatasetIngestedEvent) -> None:
-        """Persist batch, statistics, quality checks and policy decision."""
-        self._datasets.ensure_dataset(event.dataset_id)
-        if event.raw_uri is None:
-            self._datasets.upsert_batch(
-                Batch(
-                    dataset_id=event.dataset_id,
-                    batch_id=event.batch_id,
-                    records=event.records,
-                    received_at=event.received_at,
-                    schema_version=event.schema_version,
-                    object_key=None,
-                )
+    def handle_dataset_ingested(
+        self, event: DatasetIngestedEvent, *, request_id: str | None = None
+    ):
+        """Resume the initial evaluation, or use an explicit request ID to reevaluate."""
+        with self._quality.evaluation_lock(event.dataset_id, event.batch_id):
+            captured = []
+            evaluation = self._runner.run(
+                event,
+                self._suites.get(event.dataset_id),
+                lambda current: self._prepare(current, capture=captured),
+                request_id=request_id,
             )
-            return
+            evaluation = self._runner.deliver(evaluation, self._deliver)
+            self._features.collect(evaluation, captured[0] if captured else None)
+            return evaluation
 
+    def _deliver(self, evaluation):
+        self._quality.project_evaluation(evaluation)
+        latest = self._quality.list_evaluations(
+            evaluation.event.dataset_id, evaluation.event.batch_id
+        )
+        if latest and latest[0].evaluation_id == evaluation.evaluation_id:
+            self._metrics.set_profile_eligible(
+                evaluation.event.dataset_id,
+                evaluation.event.batch_id,
+                eligible(evaluation),
+            )
+        for check in evaluation.checks:
+            if check.result is not None and check.result.status is CheckStatus.FAIL:
+                self._publisher.publish(
+                    build_quality_failed_event(
+                        check.result,
+                        evaluation.evaluated_at,
+                        evaluation_id=evaluation.evaluation_id,
+                    )
+                )
+
+    def _prepare(self, evaluation, *, capture=None):
+        event = evaluation.event
+        self._datasets.ensure_dataset(event.dataset_id)
+        self._datasets.upsert_batch(
+            Batch(
+                dataset_id=event.dataset_id,
+                batch_id=event.batch_id,
+                records=event.records,
+                received_at=event.received_at,
+                schema_version=event.schema_version,
+                object_key=event.raw_uri,
+            )
+        )
+        if event.raw_uri is None:
+            raise ValueError("missing_raw_uri: quality evaluation requires raw data")
         records = read_raw(event.raw_uri)
+        if capture is not None:
+            capture[:] = [records]
         stats = compute_statistics(records)
-        evaluated_at = max(self._clock(), event.received_at)
-
+        profile = build_profile(event, records, evaluation.suite)
         expected_schema = self._previous_schema(event.dataset_id, event.schema_version)
+        history = select_history(profile, self._metrics.list_profiles(event.dataset_id))
+        checks = tuple(
+            prepare_check(
+                c,
+                stats,
+                event,
+                evaluation.evaluated_at,
+                expected_schema,
+                history,
+                profile,
+            )
+            for c in evaluation.checks
+        )
+        self._metrics.save_profile(profile)
         self._datasets.save_schema(
-            event.dataset_id, event.schema_version, stats.schema, event.received_at,
+            event.dataset_id, event.schema_version, stats.schema, event.received_at
         )
         self._datasets.upsert_batch(
             Batch(
@@ -102,25 +162,8 @@ class StreamEventHandler:
                 object_key=event.raw_uri,
             )
         )
-
-        history = self._metrics.list_metric_history(
-            event.dataset_id,
-            MetricKind.ROW_COUNT,
-            limit=self._thresholds.row_count_history_window + 1,
-        )
-        self._save_metrics(event, stats, evaluated_at)
-
-        results = self._run_checks(event, stats, expected_schema, history, evaluated_at)
-        for result in results:
-            self._quality.save_check_result(result)
-        decision = evaluate_quality(results)
-        self._quality.save_quality_decision(
-            event.dataset_id, event.batch_id, decision, evaluated_at,
-        )
-
-        for result in results:
-            if result.status is CheckStatus.FAIL:
-                self._publisher.publish(build_quality_failed_event(result, evaluated_at))
+        self._save_metrics(event, stats, profile)
+        return PreparedChecks(checks, getattr(records, "sha256", None))
 
     def handle_pipeline_event(self, event: PipelineEvent) -> None:
         """Persist pipeline run lifecycle transitions in pipeline_runs."""
@@ -153,23 +196,22 @@ class StreamEventHandler:
         self._pipelines.upsert_pipeline_run(run)
 
     def _previous_schema(
-        self, dataset_id: str, schema_version: int,
+        self,
+        dataset_id: str,
+        schema_version: int,
     ) -> tuple[SchemaField, ...] | None:
         for version in range(schema_version - 1, 0, -1):
             stored = self._datasets.get_schema(dataset_id, version)
             if stored is not None:
                 return stored
-        return None
+        return self._datasets.get_schema(dataset_id, schema_version)
 
     def _save_metrics(
         self,
         event: DatasetIngestedEvent,
         stats: DatasetStatistics,
-        evaluated_at: datetime,
+        profile,
     ) -> None:
-        freshness_seconds = (
-            evaluated_at.astimezone(timezone.utc) - event.received_at.astimezone(timezone.utc)
-        ).total_seconds()
         points = [
             MetricPoint(
                 dataset_id=event.dataset_id,
@@ -178,14 +220,6 @@ class StreamEventHandler:
                 observed_at=event.received_at,
                 stats_version=STATS_VERSION,
                 value=stats.row_count,
-            ),
-            MetricPoint(
-                dataset_id=event.dataset_id,
-                scope_id=event.batch_id,
-                metric=MetricKind.FRESHNESS_SECONDS,
-                observed_at=event.received_at,
-                stats_version=STATS_VERSION,
-                value=freshness_seconds,
             ),
         ]
         for column, rate in sorted(stats.null_rates.items()):
@@ -212,66 +246,22 @@ class StreamEventHandler:
                     column=column,
                 )
             )
+        for column, summary in profile.columns.items():
+            for metric in (
+                MetricKind.NON_NULL_COUNT,
+                MetricKind.NULL_COUNT,
+                MetricKind.DISTINCT_RATIO,
+            ):
+                points.append(
+                    MetricPoint(
+                        dataset_id=event.dataset_id,
+                        scope_id=event.batch_id,
+                        metric=metric,
+                        column=column,
+                        observed_at=event.received_at,
+                        stats_version=STATS_VERSION,
+                        value=summary[metric.value],
+                    )
+                )
         for point in points:
             self._metrics.save_metric(point)
-
-    def _run_checks(
-        self,
-        event: DatasetIngestedEvent,
-        stats: DatasetStatistics,
-        expected_schema: tuple[SchemaField, ...] | None,
-        history: list[MetricPoint],
-        evaluated_at: datetime,
-    ) -> list[CheckResult]:
-        dataset_id = event.dataset_id
-        context = QualityContext(dataset_id=dataset_id, scope_id=event.batch_id)
-        results: list[CheckResult] = []
-
-        if expected_schema is not None:
-            results.append(
-                check_schema(
-                    SchemaObservation(fields=stats.schema),
-                    self._thresholds.schema_constraint(expected_schema),
-                    check_id=f"{dataset_id}.schema",
-                    context=context,
-                )
-            )
-
-        results.append(
-            check_freshness(
-                FreshnessObservation(
-                    last_updated_at=event.received_at, evaluated_at=evaluated_at,
-                ),
-                self._thresholds.freshness_constraint(),
-                check_id=f"{dataset_id}.freshness",
-                context=context,
-            )
-        )
-
-        null_constraint = self._thresholds.null_rate_constraint()
-        for column, rate in sorted(stats.null_rates.items()):
-            results.append(
-                check_null_rate(
-                    NullRateObservation(null_rate=rate),
-                    null_constraint,
-                    check_id=f"{dataset_id}.{column}.null_rate",
-                    context=QualityContext(
-                        dataset_id=dataset_id, scope_id=event.batch_id, column=column,
-                    ),
-                )
-            )
-
-        row_constraint = self._thresholds.row_count_constraint(
-            history, exclude_scope=event.batch_id,
-        )
-        if row_constraint is not None:
-            results.append(
-                check_row_count(
-                    RowCountObservation(row_count=stats.row_count),
-                    row_constraint,
-                    check_id=f"{dataset_id}.row_count",
-                    context=context,
-                )
-            )
-
-        return results

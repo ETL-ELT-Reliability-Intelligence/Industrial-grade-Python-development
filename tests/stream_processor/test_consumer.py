@@ -51,8 +51,11 @@ def test_runner_processes_events_and_commits_offsets(tmp_path):
     assert pipelines.get_pipeline_run("orders_daily", "r1") is not None
 
 
-def test_offset_is_not_committed_when_handler_raises(tmp_path):
-    handler, _, _, _, _, _ = make_handler()
+def test_offset_is_not_committed_when_durable_store_is_unavailable(tmp_path, monkeypatch):
+    handler, _, _, _, quality, _ = make_handler()
+    def unavailable(_):
+        raise ConnectionError("database unavailable")
+    monkeypatch.setattr(quality, "save_evaluation", unavailable)
     bad_event = DatasetIngestedEvent(
         dataset_id="orders",
         batch_id="b-missing",

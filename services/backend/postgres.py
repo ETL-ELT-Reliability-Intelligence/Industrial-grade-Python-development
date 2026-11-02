@@ -1,25 +1,46 @@
 """Read adapter over the existing schema; no schema changes or data writes."""
 
-from contextlib import contextmanager
 import logging
 from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
 
 import psycopg
 from psycopg.conninfo import make_conninfo
 
+from contracts.quality import QualityDecision, QualityStatus
 from contracts.state import Batch
-from storage.postgres import PostgresQualityRepository, connect
-from storage.serialization import check_result_from_row
+from storage.postgres import connect
+from storage.serialization import check_result_from_row, reasons_from_json
 
-from .models import Dataset, QualityScope, ScopeQuality, StoredCheck
+from .evaluations import PostgresEvaluationReader
+from .models import (
+    Dataset,
+    EvaluationDetail,
+    EvaluationSummary,
+    QualityScope,
+    ScopeQuality,
+    StoredCheck,
+)
 from .repository import StorageUnavailable
 
 logger = logging.getLogger(__name__)
 
 
 class PostgresReadRepository:
-    def __init__(self, connection: psycopg.Connection) -> None:
+    def __init__(self, connection: psycopg.Connection[dict[str, Any]]) -> None:
         self.connection = connection
+        self.evaluations = PostgresEvaluationReader(connection)
+
+    def list_evaluations(
+        self, dataset_id: str, scope_id: str, limit: int, offset: int
+    ) -> list[EvaluationSummary]:
+        return self.evaluations.list_evaluations(dataset_id, scope_id, limit, offset)
+
+    def get_evaluation(
+        self, dataset_id: str, evaluation_id: str
+    ) -> EvaluationDetail | None:
+        return self.evaluations.get_evaluation(dataset_id, evaluation_id)
 
     def ready(self) -> None:
         # Verify columns and read permissions as well as connectivity. No data scan.
@@ -29,6 +50,9 @@ class PostgresReadRepository:
             "SELECT check_id, dataset_id, scope_id, column_name, kind, status, reason_code, "
             "message, observation, constraint_spec, details, recorded_at FROM quality_check_results LIMIT 0",
             "SELECT dataset_id, scope_id, status, reasons, decided_at FROM quality_decisions LIMIT 0",
+            "SELECT evaluation_id, dataset_id, scope_id, sequence, created_at, updated_at, snapshot "
+            "FROM quality_evaluations LIMIT 0",
+            "SELECT evaluation_id, check_id, snapshot FROM quality_executions LIMIT 0",
         ):
             self.connection.execute(query)
 
@@ -41,7 +65,8 @@ class PostgresReadRepository:
 
     def get_dataset(self, dataset_id: str) -> Dataset | None:
         row = self.connection.execute(
-            "SELECT dataset_id, created_at FROM datasets WHERE dataset_id = %s", (dataset_id,),
+            "SELECT dataset_id, created_at FROM datasets WHERE dataset_id = %s",
+            (dataset_id,),
         ).fetchone()
         return Dataset(**row) if row else None
 
@@ -53,30 +78,47 @@ class PostgresReadRepository:
         ).fetchall()
         return [Batch(**row) for row in rows]
 
-    def list_quality_scopes(self, dataset_id: str, limit: int, offset: int) -> list[QualityScope]:
+    def list_quality_scopes(
+        self, dataset_id: str, limit: int, offset: int
+    ) -> list[QualityScope]:
         rows = self.connection.execute(
             "SELECT scope_id, max(saved_at) AS last_saved_at FROM ("
             "SELECT scope_id, recorded_at AS saved_at FROM quality_check_results WHERE dataset_id = %s "
-            "UNION ALL SELECT scope_id, decided_at FROM quality_decisions WHERE dataset_id = %s"
+            "UNION ALL SELECT scope_id, decided_at FROM quality_decisions WHERE dataset_id = %s "
+            "UNION ALL SELECT scope_id, GREATEST(created_at, updated_at) FROM quality_evaluations "
+            "WHERE dataset_id = %s"
             ") AS observations GROUP BY scope_id ORDER BY last_saved_at DESC, scope_id "
-            "LIMIT %s OFFSET %s", (dataset_id, dataset_id, limit, offset),
+            "LIMIT %s OFFSET %s",
+            (dataset_id, dataset_id, dataset_id, limit, offset),
         ).fetchall()
         return [QualityScope(**row) for row in rows]
 
     def get_quality(self, dataset_id: str, scope_id: str) -> ScopeQuality:
         rows = self.connection.execute(
             "SELECT * FROM quality_check_results WHERE dataset_id = %s AND scope_id = %s "
-            "ORDER BY check_id, COALESCE(column_name, '')", (dataset_id, scope_id),
+            "ORDER BY check_id, COALESCE(column_name, '')",
+            (dataset_id, scope_id),
         ).fetchall()
-        decision = PostgresQualityRepository(self.connection).get_quality_decision(dataset_id, scope_id)
-        timestamp = self.connection.execute(
-            "SELECT decided_at FROM quality_decisions WHERE dataset_id = %s AND scope_id = %s",
+        decision_row = self.connection.execute(
+            "SELECT status, reasons, decided_at FROM quality_decisions WHERE dataset_id = %s AND scope_id = %s",
             (dataset_id, scope_id),
         ).fetchone()
         return ScopeQuality(
-            dataset_id=dataset_id, scope_id=scope_id,
-            checks=[StoredCheck(result=check_result_from_row(row), recorded_at=row["recorded_at"]) for row in rows],
-            decision=decision, decided_at=timestamp["decided_at"] if timestamp else None,
+            dataset_id=dataset_id,
+            scope_id=scope_id,
+            checks=[
+                StoredCheck(
+                    result=check_result_from_row(row), recorded_at=row["recorded_at"]
+                )
+                for row in rows
+            ],
+            decision=QualityDecision(
+                status=QualityStatus(decision_row["status"]),
+                reasons=reasons_from_json(decision_row["reasons"]),
+            )
+            if decision_row
+            else None,
+            decided_at=decision_row["decided_at"] if decision_row else None,
         )
 
 
@@ -88,18 +130,28 @@ def open_repository(dsn: str | None) -> Iterator[PostgresReadRepository]:
         # Shared factory retains UTC/dict-row behavior. Never log the DSN or driver message.
         with connect(make_conninfo(dsn, connect_timeout=5)) as connection:
             with connection.transaction():
-                connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                connection.execute(
+                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                )
                 connection.execute("SET LOCAL statement_timeout = '5s'")
                 connection.execute("SET LOCAL lock_timeout = '2s'")
                 yield PostgresReadRepository(connection)
     except (
-        psycopg.OperationalError, psycopg.InterfaceError, psycopg.ProgrammingError,
-        psycopg.errors.QueryCanceled, psycopg.errors.InsufficientPrivilege,
+        psycopg.OperationalError,
+        psycopg.InterfaceError,
+        psycopg.ProgrammingError,
+        psycopg.errors.QueryCanceled,
+        psycopg.errors.InsufficientPrivilege,
     ) as exc:
         # Programming errors other than missing schema/configuration remain server bugs.
         if isinstance(exc, psycopg.ProgrammingError) and not isinstance(
-            exc, (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn,
-                  psycopg.errors.InvalidSchemaName, psycopg.errors.InsufficientPrivilege)
+            exc,
+            (
+                psycopg.errors.UndefinedTable,
+                psycopg.errors.UndefinedColumn,
+                psycopg.errors.InvalidSchemaName,
+                psycopg.errors.InsufficientPrivilege,
+            ),
         ):
             raise
         logger.warning("State store unavailable (%s)", type(exc).__name__)

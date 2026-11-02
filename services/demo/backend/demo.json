@@ -27,18 +27,18 @@
     },
     {
       "id": "inc-041",
-      "title": "Данные клиентов обновляются с задержкой",
-      "summary": "Последний доступный snapshot customers старше целевого порога freshness. Проверяется задержка загрузки.",
+      "title": "В данных клиентов выросла доля пропусков",
+      "summary": "В customers выросла доля пропусков customer_state относительно исторического уровня. Проверяется состав загрузки.",
       "status": "investigating",
       "severity": "warning",
       "detected_at": "2026-10-05T09:40:00+00:00",
       "affected_dataset_ids": ["customers"],
       "observations": [
-        {"id": "obs-004", "dataset_id": "customers", "metric": "freshness", "expected": 30, "actual": 95, "unit": "minutes", "observed_at": "2026-10-05T09:40:00+00:00"}
+        {"id": "obs-004", "dataset_id": "customers", "metric": "null_rate", "expected": 0.01, "actual": 0.25, "unit": "ratio", "observed_at": "2026-10-05T09:40:00+00:00"}
       ],
       "root_cause_candidates": [],
       "timeline": [
-        {"at": "2026-10-05T09:40:00+00:00", "description": "Зафиксировано превышение порога freshness."},
+        {"at": "2026-10-05T09:40:00+00:00", "description": "Зафиксирован рост пропусков customer_state."},
         {"at": "2026-10-05T09:45:00+00:00", "description": "Инцидент передан на расследование."}
       ],
       "impact": {"potential_dataset_ids": ["customer_ltv"], "potential_pipeline_ids": ["customer_sync"], "potential_dashboard_ids": []}

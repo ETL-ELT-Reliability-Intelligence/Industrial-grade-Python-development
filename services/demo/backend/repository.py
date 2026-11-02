@@ -29,7 +29,9 @@ class DemoIncidentRepository:
         }
 
     def list_incidents(self) -> list[Incident]:
-        return sorted(self._incidents.values(), key=lambda item: item.detected_at, reverse=True)
+        return sorted(
+            self._incidents.values(), key=lambda item: item.detected_at, reverse=True
+        )
 
     def get_incident(self, incident_id: str) -> Incident | None:
         return self._incidents.get(incident_id)

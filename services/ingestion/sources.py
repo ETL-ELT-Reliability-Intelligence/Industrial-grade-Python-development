@@ -3,6 +3,7 @@
 import csv
 import random
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -13,6 +14,11 @@ Record = dict[str, Any]
 class SourceBatch:
     dataset_id: str
     records: list[Record]
+    source_id: str = "unspecified"
+    granularity: str = "batch"
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+    complete: bool = True
 
 
 class Source(Protocol):
@@ -28,10 +34,12 @@ class MockApiSource:
     still reporting success - the main scenario the platform must detect.
     """
 
-    dataset_id = "orders"
+    dataset_id = "mock_orders"
     PAYMENT_METHODS = ("card", "cash", "other")
 
-    def __init__(self, base_rows: int = 1000, volume_factor: float = 1.0, seed: int = 0):
+    def __init__(
+        self, base_rows: int = 1000, volume_factor: float = 1.0, seed: int = 0
+    ):
         if base_rows < 0 or not 0 <= volume_factor <= 1:
             raise ValueError("base_rows must be >= 0 and volume_factor within [0, 1]")
         self._rows = int(base_rows * volume_factor)
@@ -44,11 +52,13 @@ class MockApiSource:
                 "order_id": i,
                 "customer_id": rng.randint(1, 500),
                 "amount": round(rng.uniform(5, 500), 2),
-                "payment_method": rng.choices(self.PAYMENT_METHODS, weights=(70, 20, 10))[0],
+                "payment_method": rng.choices(
+                    self.PAYMENT_METHODS, weights=(70, 20, 10)
+                )[0],
             }
             for i in range(self._rows)
         ]
-        return SourceBatch(self.dataset_id, records)
+        return SourceBatch(self.dataset_id, records, source_id="mock")
 
 
 class CsvSource:
@@ -58,7 +68,11 @@ class CsvSource:
 
     def fetch(self) -> SourceBatch:
         with self._path.open(newline="", encoding="utf-8") as f:
-            return SourceBatch(self.dataset_id, list(csv.DictReader(f)))
+            records = [
+                {key: (value if value != "" else None) for key, value in row.items()}
+                for row in csv.DictReader(f)
+            ]
+            return SourceBatch(self.dataset_id, records, source_id="csv")
 
 
 class OlistSource:
@@ -77,9 +91,13 @@ class OlistSource:
         "customers": "olist_customers_dataset.csv",
     }
 
-    def __init__(self, dataset_id: str, root: Path, window: int = 0, volume_factor: float = 1.0):
+    def __init__(
+        self, dataset_id: str, root: Path, window: int = 0, volume_factor: float = 1.0
+    ):
         if dataset_id not in self.FILES:
-            raise ValueError(f"unknown Olist table {dataset_id!r}; expected one of {sorted(self.FILES)}")
+            raise ValueError(
+                f"unknown Olist table {dataset_id!r}; expected one of {sorted(self.FILES)}"
+            )
         if window < 0 or not 0 <= volume_factor <= 1:
             raise ValueError("window must be >= 0 and volume_factor within [0, 1]")
         self.dataset_id = dataset_id
@@ -89,22 +107,51 @@ class OlistSource:
 
     def fetch(self) -> SourceBatch:
         orders = self._read("orders")
-        months = sorted({row["order_purchase_timestamp"][:7] for row in orders if row["order_purchase_timestamp"]})
+        months = sorted(
+            {
+                row["order_purchase_timestamp"][:7]
+                for row in orders
+                if row["order_purchase_timestamp"]
+            }
+        )
         if self._window >= len(months):
-            raise ValueError(f"window {self._window} is out of range: dataset has {len(months)} months")
-        month_orders = [r for r in orders if (r["order_purchase_timestamp"] or "")[:7] == months[self._window]]
+            raise ValueError(
+                f"window {self._window} is out of range: dataset has {len(months)} months"
+            )
+        month_orders = [
+            r
+            for r in orders
+            if (r["order_purchase_timestamp"] or "")[:7] == months[self._window]
+        ]
 
         if self.dataset_id == "orders":
             rows = month_orders
         elif self.dataset_id == "customers":
             customer_ids = {r["customer_id"] for r in month_orders}
-            rows = [r for r in self._read("customers") if r["customer_id"] in customer_ids]
+            rows = [
+                r for r in self._read("customers") if r["customer_id"] in customer_ids
+            ]
         else:
             order_ids = {r["order_id"] for r in month_orders}
-            rows = [r for r in self._read(self.dataset_id) if r["order_id"] in order_ids]
+            rows = [
+                r for r in self._read(self.dataset_id) if r["order_id"] in order_ids
+            ]
 
-        return SourceBatch(self.dataset_id, rows[: int(len(rows) * self._volume_factor)])
+        year, month = map(int, months[self._window].split("-"))
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        end = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=timezone.utc)
+        return SourceBatch(
+            self.dataset_id,
+            rows[: int(len(rows) * self._volume_factor)],
+            source_id="olist",
+            granularity="month",
+            period_start=start,
+            period_end=end,
+        )
 
     def _read(self, table: str) -> list[Record]:
         with (self._root / self.FILES[table]).open(newline="", encoding="utf-8") as f:
-            return [{key: (value or None) for key, value in row.items()} for row in csv.DictReader(f)]
+            return [
+                {key: (value or None) for key, value in row.items()}
+                for row in csv.DictReader(f)
+            ]
