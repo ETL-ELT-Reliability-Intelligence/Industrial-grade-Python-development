@@ -62,6 +62,7 @@ def orders_ingestion():
             run_id=run_id,
             period_start=context["data_interval_start"],
             period_end=context["data_interval_end"],
+            granularity="hour",
         ).model_dump(mode="json")
 
     @task

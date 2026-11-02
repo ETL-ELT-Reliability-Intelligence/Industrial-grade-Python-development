@@ -49,6 +49,7 @@ class IngestionService:
         *,
         period_start=None,
         period_end=None,
+        granularity: str | None = None,
     ) -> DatasetIngestedEvent:
         if run_id is not None:
             committed = self._store.load_run(source.dataset_id, run_id)
@@ -91,7 +92,7 @@ class IngestionService:
             schema_version=version,
             raw_uri=raw_uri,
             source_id=batch.source_id,
-            granularity="hour" if period_start is not None else batch.granularity,
+            granularity=granularity or batch.granularity,
             period_start=period_start
             if period_start is not None
             else batch.period_start,

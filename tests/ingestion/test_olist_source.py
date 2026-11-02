@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from services.ingestion.olist_sample import write_sample
@@ -50,3 +52,17 @@ def test_rejects_unknown_table_and_window_out_of_range(root):
         OlistSource("products", root)
     with pytest.raises(ValueError):
         fetch(root, "orders", window=3)
+
+
+def test_month_window_is_reported_with_its_period(root):
+    batch = fetch(root, "orders", window=1)
+    assert (batch.granularity, batch.source_id, batch.complete) == ("month", "olist", True)
+    assert batch.period_start == datetime(2018, 2, 1, tzinfo=timezone.utc)
+    assert batch.period_end == datetime(2018, 3, 1, tzinfo=timezone.utc)
+
+
+def test_december_window_ends_in_january_of_next_year(tmp_path):
+    write_sample(tmp_path, months=12, orders_per_month=5)
+    batch = OlistSource("orders", tmp_path, window=11).fetch()
+    assert batch.period_start == datetime(2018, 12, 1, tzinfo=timezone.utc)
+    assert batch.period_end == datetime(2019, 1, 1, tzinfo=timezone.utc)

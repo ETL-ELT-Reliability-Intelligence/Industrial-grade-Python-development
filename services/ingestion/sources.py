@@ -18,6 +18,7 @@ class SourceBatch:
     granularity: str = "batch"
     period_start: datetime | None = None
     period_end: datetime | None = None
+    # False only if the source itself knows it delivered less than asked; a silently short batch stays True
     complete: bool = True
 
 

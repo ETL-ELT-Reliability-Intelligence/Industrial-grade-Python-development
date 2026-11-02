@@ -7,7 +7,8 @@ from contracts.events import DatasetIngestedEvent, SchemaChangedEvent, parse_eve
 from services.ingestion.normalize import ValidationError
 from services.ingestion.publisher import InMemoryPublisher
 from services.ingestion.service import IngestionService
-from services.ingestion.sources import MockApiSource, SourceBatch
+from services.ingestion.olist_sample import write_sample
+from services.ingestion.sources import MockApiSource, OlistSource, SourceBatch
 from services.ingestion.storage import LocalRawStore
 
 NOW = datetime(2026, 9, 26, 10, 1, tzinfo=timezone.utc)
@@ -21,6 +22,13 @@ class FixedSource:
 
     def fetch(self):
         return SourceBatch(self.dataset_id, self._records)
+
+
+@pytest.fixture(scope="module")
+def olist_root(tmp_path_factory):
+    path = tmp_path_factory.mktemp("olist")
+    write_sample(path, months=3, orders_per_month=10)
+    return path
 
 
 @pytest.fixture
@@ -259,3 +267,36 @@ def test_lost_race_for_batch_number_does_not_overwrite_other_batch(tmp_path):
     store = LocalRawStore(tmp_path)
     assert store.load_raw(FixedSource.dataset_id, first.batch_id) == [{"id": 1}]
     assert store.load_raw(FixedSource.dataset_id, second.batch_id) == [{"id": 2}]
+
+
+HOUR = (datetime(2026, 9, 26, 9, tzinfo=timezone.utc), datetime(2026, 9, 26, 10, tzinfo=timezone.utc))
+
+
+def test_event_takes_period_and_source_from_the_batch(service, olist_root):
+    event = service.ingest(OlistSource("orders", olist_root, window=1))
+    assert (event.granularity, event.source_id, event.complete) == ("month", "olist", True)
+    assert event.period_start == datetime(2018, 2, 1, tzinfo=timezone.utc)
+
+
+def test_explicit_period_overrides_the_batch_period(service):
+    event = service.ingest(
+        FixedSource([{"id": 1}]), period_start=HOUR[0], period_end=HOUR[1], granularity="hour"
+    )
+    assert (event.granularity, event.period_start, event.period_end) == ("hour", *HOUR)
+
+
+def test_batch_without_period_stays_a_plain_batch(service):
+    event = service.ingest(FixedSource([{"id": 1}]))
+    assert (event.granularity, event.period_start, event.period_end) == ("batch", None, None)
+    assert event.source_id == "unspecified"
+
+
+def test_invalid_period_is_rejected_and_not_published(service, publisher):
+    with pytest.raises(ValueError):
+        service.ingest(FixedSource([{"id": 1}]), period_start=HOUR[1], period_end=HOUR[0])
+    assert publisher.events == []
+
+
+def test_windowed_granularity_requires_a_period(service):
+    with pytest.raises(ValueError):
+        service.ingest(FixedSource([{"id": 1}]), granularity="hour")

@@ -30,6 +30,9 @@ class KafkaPublisher:
             if err:
                 errors.append(err)
 
-        self._producer.produce(event.topic, key=event.key, value=event.model_dump_json(), on_delivery=on_delivery)
+        try:
+            self._producer.produce(event.topic, key=event.key, value=event.model_dump_json(), on_delivery=on_delivery)
+        except BufferError as exc:  # local producer queue is full
+            raise RuntimeError(f"Kafka delivery failed: {exc}") from exc
         if self._producer.flush(10) or errors:
             raise RuntimeError(f"Kafka delivery failed: {errors[0] if errors else 'timeout'}")
