@@ -195,7 +195,7 @@ def test_crash_between_save_raw_and_save_run_leaves_orphan_batch(tmp_path):
     event = service.ingest(MockApiSource(base_rows=5), run_id="r1")
 
     assert event.batch_id == "2026-09-26-002"
-    assert sorted(p.name for p in (tmp_path / "orders").glob("*.jsonl")) == [
+    assert sorted(p.name for p in (tmp_path / MockApiSource.dataset_id).glob("*.jsonl")) == [
         "2026-09-26-001.jsonl",
         "2026-09-26-002.jsonl",
     ]
@@ -257,5 +257,5 @@ def test_lost_race_for_batch_number_does_not_overwrite_other_batch(tmp_path):
 
     assert (first.batch_id, second.batch_id) == ("2026-09-26-001", "2026-09-26-002")
     store = LocalRawStore(tmp_path)
-    assert store.load_raw("orders", first.batch_id) == [{"id": 1}]
-    assert store.load_raw("orders", second.batch_id) == [{"id": 2}]
+    assert store.load_raw(FixedSource.dataset_id, first.batch_id) == [{"id": 1}]
+    assert store.load_raw(FixedSource.dataset_id, second.batch_id) == [{"id": 2}]
