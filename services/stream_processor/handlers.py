@@ -33,7 +33,7 @@ from storage.repositories import (
 from data_quality.config import load_suites, CheckSuite
 from data_quality.execution import prepare_check
 from .anomaly import AnomalyConfig, detect_anomalies
-from .evaluation import EvaluationRunner
+from .evaluation import EvaluationRunner, PreparedChecks
 from .publisher import (
     EventPublisher,
     NoOpPublisher,
@@ -42,7 +42,7 @@ from .publisher import (
     build_quality_failed_from_reason,
 )
 from .raw import read_raw
-from .statistics import statistics_from_profile
+from .statistics import DatasetStatistics, statistics_from_profile
 from .profiling import build_profile
 from .feature_accumulation import FeatureAccumulator
 from data_quality.history import select_history, eligible
