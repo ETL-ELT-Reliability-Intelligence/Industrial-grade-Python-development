@@ -8,6 +8,7 @@ import json
 
 from contracts.profiles import BatchProfile
 from contracts.quality_config import PARAMETERS
+from data_quality.dates import aware_datetime
 from .statistics import field_type
 
 
@@ -117,6 +118,10 @@ def build_profile(event, records, suite):
                         valid = number(value) >= 0
                     elif params.rule == "datetime":
                         date(value)
+                    elif params.rule == "aware_datetime":
+                        aware_datetime(value)
+                    elif params.rule == "not_future":
+                        valid = aware_datetime(value) <= event.received_at
                     else:
                         valid = date(value) >= date(other)
                     invalid += int(not valid)
