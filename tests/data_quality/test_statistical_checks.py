@@ -242,7 +242,7 @@ def test_negative_amount_blocks_without_history_and_no_id_rules_are_shipped(tmp_
     assert result.decision.status.value == "BLOCK"
     assert (
         next(
-            c for c in result.checks if c.spec.kind is CheckKind.VALUE_RULE
+            c for c in result.checks if c.spec.key == "amount.non_negative"
         ).result.status.value
         == "FAIL"
     )

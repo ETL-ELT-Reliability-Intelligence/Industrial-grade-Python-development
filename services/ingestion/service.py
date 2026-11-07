@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Callable
+import logging
 
 from contracts.events import (
     DatasetIngestedEvent,
@@ -12,6 +13,8 @@ from .normalize import column_names, schema_fingerprint, validate
 from .publisher import EventPublisher
 from .sources import Source
 from .storage import RawStore
+
+logger = logging.getLogger(__name__)
 
 
 class IngestionService:
@@ -55,7 +58,9 @@ class IngestionService:
             if committed is not None:
                 events = [parse_event(payload) for payload in committed]
                 self._publish_all(events)
-                return next(e for e in events if isinstance(e, DatasetIngestedEvent))
+                ingested = next(e for e in events if isinstance(e, DatasetIngestedEvent))
+                self._log_batch(ingested)
+                return ingested
 
         batch = source.fetch()
         validate(batch)
@@ -105,7 +110,16 @@ class IngestionService:
                 batch.dataset_id, run_id, [e.model_dump_json() for e in events]
             )
         self._publish_all(events)
+        self._log_batch(ingested)
         return ingested
+
+    @staticmethod
+    def _log_batch(event: DatasetIngestedEvent) -> None:
+        logger.info(
+            "Ingested dataset=%s batch_id=%s period_start=%s period_end=%s records=%d",
+            event.dataset_id, event.batch_id, event.period_start, event.period_end,
+            event.records,
+        )
 
     def _publish_all(self, events: list[Event]) -> None:
         for event in events:

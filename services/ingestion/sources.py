@@ -3,7 +3,7 @@
 import csv
 import random
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -38,18 +38,35 @@ class MockApiSource:
     PAYMENT_METHODS = ("card", "cash", "other")
 
     def __init__(
-        self, base_rows: int = 1000, volume_factor: float = 1.0, seed: int = 0
+        self, base_rows: int = 1000, volume_factor: float = 1.0, seed: int = 0,
+        *, period_start: datetime | None = None, period_end: datetime | None = None,
     ):
         if base_rows < 0 or not 0 <= volume_factor <= 1:
             raise ValueError("base_rows must be >= 0 and volume_factor within [0, 1]")
         self._rows = int(base_rows * volume_factor)
         self._seed = seed
+        if (period_start is None) != (period_end is None):
+            raise ValueError("both period boundaries are required")
+        if period_start is None:
+            period_end = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+            period_start = period_end - timedelta(hours=1)
+        if period_start.utcoffset() is None or period_end.utcoffset() is None:
+            raise ValueError("period boundaries must include timezone")
+        if period_start >= period_end:
+            raise ValueError("period_start must precede period_end")
+        self._start = period_start.astimezone(timezone.utc)
+        self._end = period_end.astimezone(timezone.utc)
 
     def fetch(self) -> SourceBatch:
         rng = random.Random(self._seed)
+        date_rng = random.Random(self._seed)
+        duration = (self._end - self._start) // timedelta(microseconds=1)
         records = [
             {
                 "order_id": i,
+                "created_at": (
+                    self._start + timedelta(microseconds=date_rng.randrange(duration))
+                ).isoformat(),
                 "customer_id": rng.randint(1, 500),
                 "amount": round(rng.uniform(5, 500), 2),
                 "payment_method": rng.choices(
@@ -58,7 +75,10 @@ class MockApiSource:
             }
             for i in range(self._rows)
         ]
-        return SourceBatch(self.dataset_id, records, source_id="mock")
+        return SourceBatch(
+            self.dataset_id, records, source_id="mock", granularity="hour",
+            period_start=self._start, period_end=self._end,
+        )
 
 
 class CsvSource:

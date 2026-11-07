@@ -123,7 +123,7 @@ class DistributionParams(HistoryParams):
 
 
 class ValueRuleParams(Contract):
-    rule: Literal["non_negative", "datetime", "date_order"]
+    rule: Literal["non_negative", "datetime", "date_order", "aware_datetime", "not_future"]
     other_column: NonBlankText | None = None
     allow_null: bool = False
     max_invalid_rate: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
