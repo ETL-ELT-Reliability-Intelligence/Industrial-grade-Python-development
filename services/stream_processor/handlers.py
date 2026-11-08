@@ -76,6 +76,7 @@ class StreamEventHandler:
         anomalies: AnomalyRepository | None = None,
         anomaly_config: AnomalyConfig | None = None,
         feature_definitions=None,
+        order_volume_monitor=None,
     ) -> None:
         self._datasets = datasets
         self._pipelines = pipelines
@@ -92,6 +93,7 @@ class StreamEventHandler:
         self._anomalies = anomalies
         self._anomaly_config = anomaly_config
         self._features = FeatureAccumulator(metrics, clock, feature_definitions)
+        self._order_volume = order_volume_monitor
 
     def handle(self, event: Event) -> None:
         """Dispatch a parsed event to its specific handler; ignore unhandled types.
@@ -118,6 +120,8 @@ class StreamEventHandler:
             )
             evaluation = self._runner.deliver(evaluation, self._deliver)
             self._features.collect(evaluation, captured[0] if captured else None)
+            if self._order_volume is not None:
+                self._order_volume.process(evaluation)
             return evaluation
 
     def _deliver(self, evaluation):

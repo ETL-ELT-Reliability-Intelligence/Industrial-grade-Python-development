@@ -13,3 +13,4 @@ class BatchProfile(Contract):
     columns: dict[str, dict] = Field(default_factory=dict)
     checks: dict[str, dict] = Field(default_factory=dict)
     eligible: bool = False
+    order_volume: dict | None = None

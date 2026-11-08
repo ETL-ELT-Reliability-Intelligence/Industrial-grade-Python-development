@@ -12,7 +12,7 @@
 ## Запуск
 
 Сначала установите зависимости проекта, включая дополнительные группы `kafka`,
-`s3` и `storage`. Затем задайте `DATABASE_URL`, примените миграции и запустите процессор:
+`s3`, `storage` и `ml`. Затем задайте `DATABASE_URL`, примените миграции и запустите процессор:
 
 ```sh
 python -m alembic -c storage/postgres/alembic.ini upgrade head
@@ -25,6 +25,9 @@ python -m services.stream_processor --kafka localhost:9092 --quality-config conf
 
 Пороги проверок задаются в YAML. Прежние переменные `QUALITY_MAX_*`
 и `QUALITY_ROW_COUNT_*` больше не используются.
+
+После проверок качества для mock_orders выполняется [регрессия почасового объёма](order_volume.md).
+Она использует сохранённую модель, а обучение запускается отдельным ежедневным DAG.
 
 ## Оценка загрузки
 

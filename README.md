@@ -45,7 +45,7 @@
 
 ```bash
 docker compose up -d
-pip install -e ".[dev,kafka,s3]"
+pip install -e ".[dev,kafka,s3,ml]"
 python -m services.ingestion --rows 100 --kafka localhost:9092 --s3-endpoint http://localhost:9000
 ```
 
@@ -56,6 +56,9 @@ python -m services.ingestion --rows 100 --kafka localhost:9092 --s3-endpoint htt
 | Airflow  | `http://localhost:8080`| —                     |
 
 Интеграционные тесты с реальным Kafka: `KAFKA_BOOTSTRAP_SERVERS=localhost:9092 pytest -m integration`.
+
+Для mock_orders включена [регрессия почасового объёма](docs/order_volume.md): модель
+обучается ежедневно на истории источника и публикует предупреждения через stream processor.
 
 ### Сквозное демо
 

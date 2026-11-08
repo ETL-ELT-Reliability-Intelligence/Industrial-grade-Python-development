@@ -32,7 +32,7 @@ jobs:
           version: "0.12.3"
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - run: uv sync --locked --extra dev
+      - run: uv sync --locked --extra dev --extra ml
       # All service-free tests, including API, serialization and row adapters.
       # The ignored modules belong exclusively to postgres/browser/kafka below.
       - name: Run unit tests
@@ -78,7 +78,7 @@ jobs:
           version: "0.12.3"
           python-version: "3.11"
           enable-cache: true
-      - run: uv sync --locked --extra dev --extra storage
+      - run: uv sync --locked --extra dev --extra storage --extra ml
       # Fresh service database; the test harness subsequently repeats upgrade head.
       - name: Apply migrations to empty database
         run: uv run --no-sync alembic -c storage/postgres/alembic.ini upgrade head

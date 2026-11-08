@@ -18,6 +18,8 @@ from .handlers import StreamEventHandler
 from data_quality.config import load_suites
 from .publisher import KafkaPublisher
 from .feature_accumulation import load_feature_definitions
+from .order_volume import OrderVolumeMonitor
+from storage.postgres.order_volume import PostgresOrderVolumeRepository
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,16 +49,22 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     with connect(config.database_url) as connection:
+        metrics = PostgresMetricRepository(connection)
+        anomalies = PostgresAnomalyRepository(connection)
+        publisher = KafkaPublisher(config.kafka_bootstrap_servers)
         handler = StreamEventHandler(
             datasets=PostgresDatasetRepository(connection),
             pipelines=PostgresPipelineRunRepository(connection),
-            metrics=PostgresMetricRepository(connection),
+            metrics=metrics,
             quality=PostgresQualityRepository(connection),
-            publisher=KafkaPublisher(config.kafka_bootstrap_servers),
+            publisher=publisher,
             suites=suites,
-            anomalies=PostgresAnomalyRepository(connection) if anomaly_config else None,
+            anomalies=anomalies,
             anomaly_config=anomaly_config,
             feature_definitions=load_feature_definitions(args.feature_config),
+            order_volume_monitor=OrderVolumeMonitor(
+                PostgresOrderVolumeRepository(connection), metrics, anomalies, publisher,
+            ),
         )
         consumer = create_kafka_consumer(config)
         runner = StreamProcessorRunner(consumer, handler, poll_timeout=config.poll_timeout)

@@ -7,12 +7,17 @@ from pathlib import Path
 import sys
 from types import ModuleType
 from unittest.mock import Mock
+import pytest
 
 
-def test_daily_dag_runs_independently_at_one_utc(monkeypatch):
+@pytest.mark.parametrize("filename,callable_name,task_name,hour", [
+    ("orders_daily_quality", "run_daily_orders", "check_previous_day", 1),
+    ("orders_volume_training", "train_order_volume", "train_model", 2),
+])
+def test_daily_dag_schedule_and_cutoff(monkeypatch, filename, callable_name, task_name, hour):
     tasks = {}
     options = {}
-    cutoff = datetime(2026, 11, 9, 1, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 11, 9, hour, tzinfo=timezone.utc)
 
     def task(function):
         tasks[function.__name__] = function
@@ -28,7 +33,7 @@ def test_daily_dag_runs_independently_at_one_utc(monkeypatch):
     monkeypatch.setattr(sys.modules["airflow.decorators"], "task", task, raising=False)
     monkeypatch.setattr(sys.modules["airflow.operators.python"], "get_current_context",
                         lambda: {"data_interval_end": cutoff}, raising=False)
-    path = Path("pipelines/airflow/dags/orders_daily_quality.py")
+    path = Path(f"pipelines/airflow/dags/{filename}.py")
     spec = importlib.util.spec_from_file_location("daily_under_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -37,9 +42,9 @@ def test_daily_dag_runs_independently_at_one_utc(monkeypatch):
     connect = Mock(return_value=nullcontext(connection))
     run = Mock(return_value={"status": "WARN"})
     monkeypatch.setattr(module, "connect", connect)
-    monkeypatch.setattr(module, "run_daily_orders", run)
-    assert tasks["check_previous_day"]() == {"status": "WARN"}
+    monkeypatch.setattr(module, callable_name, run)
+    assert tasks[task_name]() == {"status": "WARN"}
     run.assert_called_once_with(connection, cutoff)
     connect.assert_called_once_with("test-dsn")
-    assert options["schedule"] == "0 1 * * *"
+    assert options["schedule"] == f"0 {hour} * * *"
     assert options["start_date"].tzinfo == timezone.utc
