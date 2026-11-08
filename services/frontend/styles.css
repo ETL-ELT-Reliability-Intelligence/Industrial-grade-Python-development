@@ -122,3 +122,10 @@ dd { margin: 0 0 4px; overflow-wrap: anywhere; }
 .status-pending, .status-running, .status-skipped { color: #714800; }
 .status-completed { color: #205b2d; }
 .status-error { color: #a00000; }
+
+/* Pipeline history uses the shared catalog and tables. */
+.pipeline-item { white-space: normal; overflow-wrap: anywhere; }
+#pipelines .pager { padding: 8px; }
+#pipeline-heading { overflow-wrap: anywhere; }
+#pipeline-runs .table-wrap table { min-width: 700px; }
+.pipeline-error { white-space: pre-wrap; overflow-wrap: anywhere; }

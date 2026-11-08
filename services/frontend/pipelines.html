@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru" data-theme="classic">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Запуски pipelines — Reliability Intelligence</title>
+  <script src="/assets/themes.js?v=4"></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=pipelines-1">
+  <link rel="stylesheet" href="/assets/themes.css?v=pipelines-1">
+  <script src="/assets/pipelines.js?v=1" type="module"></script>
+</head>
+<body>
+  <header class="sidebar">
+    <div class="title-bar"><span class="brand-mark">RI</span> Reliability Intelligence — мониторинг ETL/ELT</div>
+    <nav class="menu-bar" aria-label="Основная навигация">
+      <a class="nav-item" href="/" data-theme-link>Datasets и качество</a>
+      <a class="nav-item active" href="/pipelines" aria-current="page">Запуски pipelines</a>
+      <a class="nav-item" href="/docs" target="_blank" rel="noopener">Документация API</a>
+      <div class="theme-picker"><label for="theme-select">Оформление</label><select id="theme-select"><option value="classic">Windows XP / Classic</option><option value="cs">Серверы CS 1.6</option><option value="wizard">Design Wizard</option></select></div>
+    </nav>
+  </header>
+  <main>
+    <header class="page-header">
+      <div><h1>Запуски pipelines</h1><p class="subtitle">История выполнения и ошибки обработки данных.</p></div>
+      <button id="refresh" type="button" class="button">Обновить данные</button>
+    </header>
+    <p id="refreshed-at" class="snapshot" role="status">Данные ещё не загружены.</p>
+    <div class="workspace">
+      <section class="panel" aria-labelledby="pipelines-heading">
+        <div class="panel-header"><h2 id="pipelines-heading">Pipelines</h2></div>
+        <div id="pipelines" aria-live="polite"></div>
+      </section>
+      <section id="pipeline-detail" class="panel detail-panel" aria-label="История запусков pipeline">
+        <h2 id="pipeline-heading" class="detail-heading">История запусков</h2>
+        <div id="pipeline-runs" aria-live="polite"></div>
+      </section>
+    </div>
+    <footer>Успешный запуск pipeline не означает успешного прохождения качества данных. Результаты проверок доступны в разделе «Datasets и качество».</footer>
+  </main>
+</body>
+</html>

@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .api import Repository, router
+from .api import Repository, pipeline_router, router
 from .postgres import open_repository
 from .repository import (
     DatasetNotFound,
@@ -24,13 +24,14 @@ RepositoryFactory = Callable[[], AbstractContextManager[ReadRepository]]
 
 def create_app(*, repository_factory: RepositoryFactory | None = None) -> FastAPI:
     app = FastAPI(
-        title="ETL/ELT Reliability Intelligence — Dataset API",
-        version="0.2.0",
-        description="Read-only access to datasets and stored quality evidence. No quality evaluation.",
+        title="ETL/ELT Reliability Intelligence — Application API",
+        version="0.3.0",
+        description="Read-only access to datasets, stored quality evidence and pipeline runs.",
     )
     dsn = os.environ.get("DATABASE_URL")
     app.state.repository_factory = repository_factory or (lambda: open_repository(dsn))
     app.include_router(router)
+    app.include_router(pipeline_router)
 
     @app.exception_handler(StorageUnavailable)
     async def unavailable(request: Request, exc: StorageUnavailable) -> JSONResponse:
@@ -62,6 +63,10 @@ def create_app(*, repository_factory: RepositoryFactory | None = None) -> FastAP
         if not (FRONTEND_DIR / "index.html").exists():
             return JSONResponse({"detail": "Dataset API; see /docs for endpoints"})
         return FileResponse(FRONTEND_DIR / "index.html")
+
+    @app.get("/pipelines", include_in_schema=False)
+    def pipelines_dashboard() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "pipelines.html")
 
     if FRONTEND_DIR.is_dir():
         app.mount("/assets", StaticFiles(directory=FRONTEND_DIR), name="assets")

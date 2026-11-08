@@ -629,3 +629,227 @@ def test_postgres_evaluation_execution_appears_after_refresh(browser_context, th
             connection.execute(
                 "DELETE FROM datasets WHERE dataset_id = %s", (dataset_id,)
             )
+
+
+def pipeline_repository():
+    from datetime import timedelta
+
+    from contracts.state import PipelineRun, PipelineRunStatus
+
+    repository = MemoryRepository()
+    repository.pipeline_runs = [
+        PipelineRun(
+            pipeline_id="orders/daily",
+            run_id="active-run",
+            status=PipelineRunStatus.RUNNING,
+            started_at=NOW + timedelta(hours=2),
+        ),
+        PipelineRun(
+            pipeline_id="orders/daily",
+            run_id="failed-run",
+            status=PipelineRunStatus.FAILED,
+            started_at=NOW + timedelta(hours=1),
+            finished_at=NOW + timedelta(hours=1, minutes=5),
+            error="Источник недоступен",
+        ),
+        PipelineRun(
+            pipeline_id="other",
+            run_id="successful-run",
+            status=PipelineRunStatus.SUCCESS,
+            started_at=NOW,
+            finished_at=NOW + timedelta(minutes=1),
+        ),
+    ]
+    return repository
+
+
+def test_pipeline_navigation_history_theme_and_refresh(browser_context, theme):
+    repository = pipeline_repository()
+    with browser_page(browser_context, repository.factory, theme) as page:
+        errors = []
+        requests = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto("http://application.test/?dataset=orders")
+        page.get_by_role("link", name="Запуски pipelines", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-theme", theme)
+        expect(page.locator("#pipeline-runs")).to_contain_text("Выберите pipeline")
+        page.get_by_role("button", name="orders/daily", exact=True).focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(2)
+        expect(page.locator("#pipeline-runs")).to_contain_text("RUNNING")
+        expect(page.locator("#pipeline-runs")).to_contain_text("Ещё выполняется")
+        expect(page.locator("#pipeline-runs")).to_contain_text("Источник недоступен")
+        page.get_by_role("button", name="other", exact=True).click()
+        expect(page.locator("#pipeline-runs")).to_contain_text("SUCCESS")
+        page.go_back()
+        expect(page.locator("#pipeline-heading")).to_have_text("Pipeline: orders/daily")
+        page.go_forward()
+        expect(page.locator("#pipeline-heading")).to_have_text("Pipeline: other")
+        page.on("request", lambda request: requests.append(request.url))
+        next_theme = "cs" if theme != "cs" else "wizard"
+        page.get_by_label("Оформление", exact=True).select_option(next_theme)
+        expect(page.locator("html")).to_have_attribute("data-theme", next_theme)
+        assert requests == []
+        page.get_by_role("button", name="Обновить данные").click()
+        expect(page.locator("#pipeline-runs")).to_contain_text("successful-run")
+        expect(page.locator('[aria-busy="true"]')).to_have_count(0)
+        page.reload()
+        expect(page.locator("#pipeline-heading")).to_have_text("Pipeline: other")
+        page.get_by_role("link", name="Datasets и качество", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-theme", next_theme)
+        expect(page.locator("#catalog")).to_contain_text("orders")
+        assert not errors
+
+
+def test_pipeline_pagination_keeps_selection(browser_context, theme):
+    repository = pipeline_repository()
+    prototype = repository.pipeline_runs[0]
+    repository.pipeline_runs = [
+        prototype.model_copy(update={"run_id": f"run-{index:02}"})
+        for index in range(51)
+    ] + [
+        prototype.model_copy(update={"pipeline_id": f"pipeline-{index:02}"})
+        for index in range(51)
+    ]
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.goto(
+            "http://application.test/pipelines?pipeline=orders%2Fdaily&keep=yes#runs"
+        )
+        expect(page.locator("#pipelines [data-pipeline]")).to_have_count(50)
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(50)
+        page.locator("#pipeline-runs").get_by_role("button", name="Далее").click()
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(1)
+        expect(page.locator("#pipeline-runs")).to_contain_text("run-00")
+        page.locator("#pipelines").get_by_role("button", name="Далее").click()
+        expect(page.locator("#pipelines [data-pipeline]")).to_have_count(2)
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(1)
+        page.get_by_role("button", name="Обновить данные").click()
+        expect(page.locator("#pipeline-runs")).to_contain_text("run-00")
+        expect(page.locator("#pipelines [data-pipeline]")).to_have_count(2)
+        page.get_by_role("button", name="pipeline-50", exact=True).click()
+        expect(page.locator("#pipeline-heading")).to_have_text("Pipeline: pipeline-50")
+        expect(
+            page.locator("#pipeline-runs").get_by_role("button", name="Назад")
+        ).to_be_disabled()
+        assert "keep=yes" in page.url and page.url.endswith("#runs")
+
+
+def test_pipeline_errors_retry_empty_and_late_response(browser_context, theme):
+    repository = pipeline_repository()
+    with browser_page(browser_context, repository.factory, theme) as page:
+        pattern = "**/api/v1/pipeline-runs?*"
+        page.route(pattern, lambda route: route.fulfill(status=503, json={}))
+        page.goto("http://application.test/pipelines?pipeline=orders%2Fdaily")
+        expect(page.locator("#pipeline-runs [role=alert]")).to_contain_text(
+            "Хранилище недоступно"
+        )
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(0)
+        page.unroute(pattern)
+        page.locator("#pipeline-runs").get_by_role("button", name="Повторить").click()
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(2)
+        held = []
+        page.route(
+            "**/api/v1/pipeline-runs?pipeline_id=orders%2Fdaily&*",
+            lambda route: held.append(route),
+        )
+        with page.expect_request("**/pipeline-runs?pipeline_id=orders%2Fdaily&*"):
+            page.get_by_role("button", name="Обновить данные").click()
+        page.get_by_role("button", name="other", exact=True).click()
+        expect(page.locator("#pipeline-runs")).to_contain_text("successful-run")
+        assert held
+        held[0].fulfill(
+            status=200, json={"items": [], "limit": 50, "offset": 0, "has_more": False}
+        )
+        expect(page.locator("#pipeline-runs")).to_contain_text("successful-run")
+        page.goto("http://application.test/pipelines?pipeline=missing")
+        expect(page.locator("#pipeline-runs")).to_contain_text(
+            "нет сохранённых запусков"
+        )
+        page.goto("http://application.test/pipelines?pipeline=")
+        expect(page.locator("#pipeline-runs")).to_contain_text("пустой идентификатор")
+        repository.pipeline_runs = []
+        page.goto("http://application.test/pipelines")
+        expect(page.locator("#pipelines")).to_contain_text(
+            "нет pipelines с сохранёнными запусками"
+        )
+
+
+def test_pipeline_untrusted_text_mobile_and_direct_link(browser_context, theme):
+    from urllib.parse import urlencode
+
+    repository = pipeline_repository()
+    injection = '<img src=x onerror="window.injected=true">'
+    pipeline_id = "источник / ? & # '"
+    repository.pipeline_runs = [
+        repository.pipeline_runs[1].model_copy(
+            update={"pipeline_id": pipeline_id, "run_id": injection, "error": injection}
+        )
+    ]
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto(
+            f"http://application.test/pipelines?{urlencode({'pipeline': pipeline_id})}"
+        )
+        expect(page.locator("#pipeline-heading")).to_have_text(
+            f"Pipeline: {pipeline_id}"
+        )
+        expect(page.locator("#pipeline-runs")).to_contain_text(injection)
+        expect(page.locator("#pipeline-runs .status-error")).to_have_text("FAILED")
+        assert page.locator("#pipeline-runs img").count() == 0
+        assert page.evaluate("window.injected") is None
+        assert page.locator("#pipeline-runs .table-wrap").evaluate(
+            "element => element.scrollWidth > element.clientWidth"
+        )
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_postgres_pipeline_run_changes_after_refresh(browser_context, theme):
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from contracts.state import PipelineRun, PipelineRunStatus
+    from storage.postgres import PostgresPipelineRunRepository, connect
+    from tests.storage.support import TEST_DATABASE_URL, migrate
+
+    if not TEST_DATABASE_URL:
+        pytest.skip("Set TEST_DATABASE_URL to an expendable test database")
+    migrate(TEST_DATABASE_URL)
+    pipeline_id = f"browser-pipeline-{uuid4().hex}"
+    run = PipelineRun(
+        pipeline_id=pipeline_id,
+        run_id="run-1",
+        status=PipelineRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    with connect(TEST_DATABASE_URL) as connection:
+        storage = PostgresPipelineRunRepository(connection)
+        storage.upsert_pipeline_run(run)
+        try:
+            with browser_page(
+                browser_context, lambda: open_repository(TEST_DATABASE_URL), theme
+            ) as page:
+                page.goto(f"http://application.test/pipelines?pipeline={pipeline_id}")
+                expect(page.locator("#pipeline-runs .status-running")).to_have_text(
+                    "RUNNING"
+                )
+                storage.upsert_pipeline_run(
+                    run.model_copy(
+                        update={
+                            "status": PipelineRunStatus.FAILED,
+                            "finished_at": NOW + timedelta(minutes=1),
+                            "error": "Сбой, сохранённый через storage",
+                        }
+                    )
+                )
+                page.get_by_role("button", name="Обновить данные").click()
+                expect(page.locator("#pipeline-runs .status-error")).to_have_text(
+                    "FAILED"
+                )
+                expect(page.locator("#pipeline-runs")).to_contain_text(
+                    "Сбой, сохранённый через storage"
+                )
+                assert f"pipeline={pipeline_id}" in page.url
+        finally:
+            connection.execute(
+                "DELETE FROM pipeline_runs WHERE pipeline_id = %s", (pipeline_id,)
+            )

@@ -69,6 +69,7 @@ html[data-theme="cs"] {
 [data-theme="cs"] .status-pending, [data-theme="cs"] .status-running, [data-theme="cs"] .status-skipped { color: #e0cea1; }
 [data-theme="cs"] .status-completed { color: #b9d595; }
 [data-theme="cs"] .status-error { color: #f4baa4; }
+[data-theme="cs"] .catalog-item.pipeline-item { grid-template-columns: minmax(0, 1fr); }
 [data-theme="cs"] footer { border-color: var(--line); }
 
 /* Wizard: classic gray Windows utility; the assistant never covers data. */
@@ -92,6 +93,7 @@ html[data-theme="wizard"] { --desktop: #c0c0c0; --blue: #000080; --dark: #404040
 [data-theme="wizard"] .wizard-assistant .panel-header { background: #808080; color: #fff; }
 [data-theme="wizard"] .catalog-item { padding: 8px; }
 [data-theme="wizard"] .incident-title { font-size: 12px; }
+[data-theme="wizard"] #pipeline-detail { display: block; }
 
 @media (max-width: 1200px) { [data-theme="wizard"] .detail-panel { display: block; } }
 @media (max-width: 1000px) { [data-theme="cs"] .workspace { grid-template-columns: minmax(0, 1fr); } }
