@@ -1,7 +1,7 @@
 import { node, button, timestamp, table, dates, numbers } from "./ui.js";
 import { ApiClient } from "./api-client.js";
 import { EvaluationController } from "./evaluations.js";
-import { QualityView } from "./quality-view.js";
+import { QualityView } from "./quality-view.js?v=configuration-table-2";
 
 const PAGE_SIZE = 50;
 const panels = Object.fromEntries(["catalog", "dataset", "batches", "scopes", "quality"].map(key => [key, document.getElementById(key)]));
@@ -139,13 +139,43 @@ function loadDataset() {
 function loadBatches() {
   if (!selection.dataset) return message("batches", "Сначала выберите dataset.");
   return load("batches", listPath(`${datasetPath()}/batches`, "batches"), (data, root) => {
-    if (data.items.length) root.append(table(["Batch ID", "Строк", "Получен", "Версия схемы", "Источник"], data.items.map(item => [
-      item.batch_id, numbers.format(item.records), timestamp(item.received_at), item.schema_version,
-      item.object_key ?? "Не указан",
-    ])));
-    else root.append(node("p", "На этой странице нет сохранённых загрузок.", "message"));
+    if (data.items.length) {
+      const grid = table(["Batch ID", "Строк", "Получен", "Схема", "Источник"], data.items.map(item => [
+        item.batch_id, numbers.format(item.records), batchTime(item.received_at), item.schema_version,
+        batchSource(item.object_key),
+      ]));
+      grid.classList.add("batch-table-wrap");
+      const schemaHeading = grid.querySelectorAll("th")[3];
+      schemaHeading.title = "Версия схемы";
+      schemaHeading.setAttribute("aria-label", "Версия схемы");
+      root.append(grid);
+    } else root.append(node("p", "На этой странице нет сохранённых загрузок.", "message"));
     pagination(root, data, "batches", loadBatches);
   }, loadBatches);
+}
+
+const batchDates = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short" });
+const batchTimes = new Intl.DateTimeFormat("ru-RU", { timeStyle: "short" });
+
+function batchTime(value) {
+  const time = node("time", undefined, "batch-time");
+  const date = new Date(value);
+  time.dateTime = value;
+  time.title = value;
+  time.append(node("span", batchDates.format(date)), node("span", batchTimes.format(date), "muted"));
+  return time;
+}
+
+function batchSource(value) {
+  if (value === null || value === undefined) return node("span", "Не указан", "muted");
+  const source = node("span", undefined, "batch-source");
+  // Keep ordinary path segments together; unusually long segments can still wrap.
+  const prefix = value.match(/^[a-z][a-z\d+.-]*:\/\/[^/]*\/?/i)?.[0] ?? "";
+  const segments = value.slice(prefix.length).match(/[^/\\]+[/\\]?|[/\\]/g) ?? [];
+  for (const segment of [...(prefix ? [prefix] : []), ...segments]) {
+    source.append(node("span", segment, "batch-source-segment"), node("wbr"));
+  }
+  return source;
 }
 
 function loadScopes() {
