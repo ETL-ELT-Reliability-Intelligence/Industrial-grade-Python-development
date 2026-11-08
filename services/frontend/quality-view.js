@@ -1,4 +1,5 @@
 import { node, button, timestamp, table, evidence, badge, checkNames } from "./ui.js";
+import { configurationView } from "./configuration-view.js?v=table-2";
 
 const executionNames = {
   PENDING: "Ожидание", RUNNING: "Выполняется", COMPLETED: "Завершено",
@@ -105,9 +106,7 @@ export class QualityView {
     }
     root.append(node("p", "Время оценки и обновление записи не являются временем завершения всех проверок.", "muted"));
     root.append(policyDecision(evaluation.decision));
-    const configuration = node("div");
-    configuration.append(node("p", `Хеш конфигурации: ${evaluation.config_hash}`, "scope-label"), evidence(evaluation.suite));
-    root.append(disclosure("Конфигурация расчёта", configuration));
+    root.append(disclosure("Конфигурация расчёта", configurationView(evaluation)));
     root.append(disclosure(`Попытки подготовки (${evaluation.preparation_attempts.length})`, attemptsTable(evaluation.preparation_attempts)));
     root.append(disclosure(`Попытки доставки (${evaluation.delivery_attempts.length})`, attemptsTable(evaluation.delivery_attempts)));
     root.append(node("h3", "Проверки"));

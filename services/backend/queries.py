@@ -2,13 +2,14 @@
 
 from typing import TypeVar
 
-from contracts.state import Batch
+from contracts.state import Batch, PipelineRun
 
 from .models import (
     Dataset,
     EvaluationDetail,
     EvaluationSummary,
     Page,
+    Pipeline,
     QualityScope,
     ScopeQuality,
 )
@@ -17,6 +18,7 @@ from .repository import (
     DatasetReadRepository,
     EvaluationNotFound,
     EvaluationRepository,
+    PipelineReadRepository,
 )
 
 T = TypeVar("T")
@@ -83,3 +85,18 @@ class EvaluationQueries:
         if evaluation is None:
             raise EvaluationNotFound
         return evaluation
+
+
+class PipelineQueries:
+    def __init__(self, repository: PipelineReadRepository) -> None:
+        self.repository = repository
+
+    def pipelines(self, limit: int, offset: int) -> Page[Pipeline]:
+        return page(self.repository.list_pipelines(limit + 1, offset), limit, offset)
+
+    def runs(self, pipeline_id: str, limit: int, offset: int) -> Page[PipelineRun]:
+        return page(
+            self.repository.list_pipeline_runs(pipeline_id, limit + 1, offset),
+            limit,
+            offset,
+        )

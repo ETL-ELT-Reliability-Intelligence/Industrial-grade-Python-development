@@ -9,12 +9,16 @@ from fastapi.testclient import TestClient
 
 from contracts.evaluation import Attempt, ExecutionStatus
 from contracts.quality import DecisionReason, QualityDecision, QualityStatus
-from contracts.state import Batch
+from contracts.state import Batch, PipelineRun, PipelineRunStatus
 from services.backend.ingested_sample import DATASET_ID, prepare_sample
 from services.backend.main import create_app
 from services.backend.postgres import open_repository
 from services.backend.seed import EMPTY_DATASET, SAMPLE_DATASET, seed
-from storage.postgres import PostgresDatasetRepository, PostgresQualityRepository
+from storage.postgres import (
+    PostgresDatasetRepository,
+    PostgresPipelineRunRepository,
+    PostgresQualityRepository,
+)
 from tests.application.evaluation_support import evaluation_record
 from tests.application.support import NOW, evidence
 from tests.storage.support import TEST_DATABASE_URL, DatabaseTestCase
@@ -420,4 +424,142 @@ class EvaluationPostgresTests(DatabaseTestCase):
             ).json()["items"]
             == []
         )
+        assert self.client.get("/ready").status_code == 200
+
+
+class PipelinePostgresTests(DatabaseTestCase):
+    def setUp(self):
+        super().setUp()
+        self.pipelines = PostgresPipelineRunRepository(self.connection)
+        self.client = TestClient(
+            create_app(repository_factory=lambda: open_repository(TEST_DATABASE_URL))
+        )
+        self.client.__enter__()
+        self.addCleanup(self.client.__exit__, None, None, None)
+
+    def test_catalog_and_run_pages_read_shared_storage_with_stable_order(self):
+        runs = [
+            PipelineRun(
+                pipeline_id="orders",
+                run_id="a-success",
+                status=PipelineRunStatus.SUCCESS,
+                started_at=NOW,
+                finished_at=NOW + timedelta(minutes=1),
+            ),
+            PipelineRun(
+                pipeline_id="orders",
+                run_id="b-failed",
+                status=PipelineRunStatus.FAILED,
+                started_at=NOW,
+                finished_at=NOW + timedelta(minutes=2),
+                error="Read failed <script>alert(1)</script>",
+            ),
+            PipelineRun(
+                pipeline_id="orders",
+                run_id="running",
+                status=PipelineRunStatus.RUNNING,
+                started_at=NOW + timedelta(hours=1),
+            ),
+        ]
+        for run in runs:
+            self.pipelines.upsert_pipeline_run(run)
+        for pipeline_id in ("z-last", "a-first"):
+            self.pipelines.upsert_pipeline_run(
+                runs[2].model_copy(update={"pipeline_id": pipeline_id})
+            )
+        first = self.client.get("/api/v1/pipelines?limit=2").json()
+        assert first == {
+            "items": [{"pipeline_id": "a-first"}, {"pipeline_id": "orders"}],
+            "limit": 2,
+            "offset": 0,
+            "has_more": True,
+        }
+        assert self.client.get("/api/v1/pipelines?limit=2&offset=2").json() == {
+            "items": [{"pipeline_id": "z-last"}],
+            "limit": 2,
+            "offset": 2,
+            "has_more": False,
+        }
+        assert self.client.get("/api/v1/datasets").json()["items"] == []
+        pages = [
+            self.client.get(
+                "/api/v1/pipeline-runs",
+                params={"pipeline_id": "orders", "limit": 1, "offset": offset},
+            ).json()
+            for offset in range(3)
+        ]
+        assert [page["items"][0] for page in pages] == [
+            run.model_dump(mode="json") for run in (runs[2], runs[1], runs[0])
+        ]
+        assert [page["has_more"] for page in pages] == [True, True, False]
+        assert self.client.get("/ready").status_code == 200
+
+    def test_special_ids_and_unknown_history_do_not_leak_other_runs(self):
+        pipeline_id = " pipeline / окно? & # + % ' OR '1'='1 "
+        run = PipelineRun(
+            pipeline_id=pipeline_id,
+            run_id="scheduled / 2026? & #",
+            status=PipelineRunStatus.RUNNING,
+            started_at=NOW,
+        )
+        self.pipelines.upsert_pipeline_run(run)
+        self.pipelines.upsert_pipeline_run(
+            run.model_copy(update={"pipeline_id": "another-pipeline"})
+        )
+        response = self.client.get(
+            "/api/v1/pipeline-runs", params={"pipeline_id": pipeline_id}
+        )
+        assert response.status_code == 200
+        assert response.json()["items"] == [run.model_dump(mode="json")]
+        for params in (
+            {"pipeline_id": "unknown"},
+            {"pipeline_id": pipeline_id, "offset": 99},
+        ):
+            page = self.client.get("/api/v1/pipeline-runs", params=params).json()
+            assert page["items"] == []
+            assert page["has_more"] is False
+
+    def test_running_to_finished_update_is_visible_on_next_request(self):
+        run = PipelineRun(
+            pipeline_id="orders",
+            run_id="run-1",
+            status=PipelineRunStatus.RUNNING,
+            started_at=NOW,
+        )
+        self.pipelines.upsert_pipeline_run(run)
+        assert self.client.get(
+            "/api/v1/pipeline-runs", params={"pipeline_id": "orders"}
+        ).json()["items"] == [run.model_dump(mode="json")]
+        finished = run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "finished_at": NOW + timedelta(minutes=2),
+                "error": "Upstream unavailable",
+            }
+        )
+        with open_repository(TEST_DATABASE_URL) as repository:
+            assert repository.list_pipeline_runs("orders", 10, 0) == [run]
+            self.pipelines.upsert_pipeline_run(finished)
+            assert repository.list_pipeline_runs("orders", 10, 0) == [run]
+        assert self.client.get(
+            "/api/v1/pipeline-runs", params={"pipeline_id": "orders"}
+        ).json()["items"] == [finished.model_dump(mode="json")]
+
+    def test_missing_pipeline_table_returns_503_and_recovers(self):
+        self.connection.execute(
+            "ALTER TABLE pipeline_runs RENAME TO temporarily_missing_pipeline_runs"
+        )
+        try:
+            for path in (
+                "/ready",
+                "/api/v1/pipelines",
+                "/api/v1/pipeline-runs?pipeline_id=orders",
+            ):
+                response = self.client.get(path)
+                assert response.status_code == 503
+                assert response.json() == {"detail": "State store unavailable"}
+        finally:
+            self.connection.execute(
+                "ALTER TABLE temporarily_missing_pipeline_runs RENAME TO pipeline_runs"
+            )
         assert self.client.get("/ready").status_code == 200

@@ -1,4 +1,4 @@
-# Backend: чтение datasets и качества
+# Backend: чтение datasets, качества и запусков pipelines
 
 ```text
 HTTP /api/v1
@@ -6,6 +6,7 @@ HTTP /api/v1
     → queries.py: существование dataset, ограниченные списки
     → repository.py: ReadRepository (интерфейс приложения)
     → postgres.py: SQL чтения; evaluations.py: чтение истории и адаптер общего storage
+    → pipelines.py: ограниченное чтение каталога pipelines и истории запусков
     → существующий PostgreSQL
 ```
 
@@ -26,6 +27,8 @@ Production-factory читает только PostgreSQL. Test double наход�
 | `/datasets/{dataset_id}/quality?scope_id=...` | `{dataset_id, scope_id, checks, decision, decided_at}` |
 | `/datasets/{dataset_id}/evaluations?scope_id=...` | Page[EvaluationSummary] |
 | `/datasets/{dataset_id}/evaluations/{evaluation_id}` | EvaluationDetail |
+| `/pipelines` | Page[{pipeline_id}] |
+| `/pipeline-runs?pipeline_id=...` | Page[PipelineRun] из общего контракта |
 
 `Page` содержит `items`, `limit`, `offset`, `has_more`. Параметры: limit 1–200
 (по умолчанию 50), offset ≥ 0. SQL выбирает limit+1 записей; дополнительная запись
@@ -114,3 +117,20 @@ spec, состояние, наблюдение, ограничение, резу
 сущностей и формирует страницы; PostgresEvaluationReader читает историю;
 PostgresReadRepository объединяет операции чтения. Контракты и миграции коллег
 не изменяются. Непагинированный общий list_evaluations для HTTP-списков не используется.
+
+## История запусков pipelines
+
+Каталог выводит различные `pipeline_id` из существующей таблицы `pipeline_runs`
+в порядке `pipeline_id ASC`. История сортируется по `started_at DESC, run_id DESC`.
+Оба списка ограничены `limit+1` с offset; общий total и полный список не загружаются.
+`pipeline_id` передаётся обязательным непустым query-параметром, поэтому slash,
+пробелы внутри ID и другие специальные символы не требуют нового URL-контракта.
+Неизвестный ID даёт 200 и пустую страницу; отсутствие записей не подтверждает
+существование или отсутствие pipeline в Airflow.
+
+Чтение возвращает исходный `PipelineRun`: `running/success/failed`, времена и
+nullable error. Статус качества из него не выводится. Связи с dataset нет.
+Каталог и offset принадлежат application read-адаптеру; общий контракт и методы
+записи storage остаются прежними. Все запросы используют существующую READ ONLY
+транзакцию и параметризованный SQL. `/ready` дополнительно проверяет доступность
+колонок `pipeline_runs`; недоступность возвращается как обычный 503.

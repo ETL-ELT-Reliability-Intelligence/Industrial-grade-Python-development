@@ -107,6 +107,22 @@ dd { margin: 0 0 4px; overflow-wrap: anywhere; }
 #dataset-detail > .detail-section { margin-top: 12px; }
 #dataset-detail .table-wrap { max-width: 100%; }
 
+/* Reserve room for identifiers and measurements before giving the rest to paths. */
+.batch-table-wrap table { min-width: 640px; }
+.batch-table-wrap th, .batch-table-wrap td { overflow-wrap: normal; word-break: normal; }
+.batch-table-wrap th:nth-child(1) { width: 130px; }
+.batch-table-wrap th:nth-child(2) { width: 76px; }
+.batch-table-wrap th:nth-child(3) { width: 112px; }
+.batch-table-wrap th:nth-child(4) { width: 58px; }
+.batch-table-wrap th:not(:last-child), .batch-table-wrap td:not(:last-child) { white-space: nowrap; }
+.batch-table-wrap th:nth-child(2), .batch-table-wrap td:nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; }
+.batch-table-wrap th:nth-child(4), .batch-table-wrap td:nth-child(4) { text-align: center; }
+.batch-time { display: block; font-variant-numeric: tabular-nums; }
+.batch-time > span { display: block; }
+.batch-time .muted { margin: 0; }
+.batch-source { overflow-wrap: anywhere; }
+.batch-source-segment { display: inline-block; max-width: 100%; vertical-align: top; overflow-wrap: anywhere; }
+
 /* Evaluation history shares the existing window, table and control palette. */
 #evaluations, #quality { min-width: 0; }
 #quality h3, #quality h4 { overflow-wrap: anywhere; }
@@ -122,3 +138,10 @@ dd { margin: 0 0 4px; overflow-wrap: anywhere; }
 .status-pending, .status-running, .status-skipped { color: #714800; }
 .status-completed { color: #205b2d; }
 .status-error { color: #a00000; }
+
+/* Pipeline history uses the shared catalog and tables. */
+.pipeline-item { white-space: normal; overflow-wrap: anywhere; }
+#pipelines .pager { padding: 8px; }
+#pipeline-heading { overflow-wrap: anywhere; }
+#pipeline-runs .table-wrap table { min-width: 700px; }
+.pipeline-error { white-space: pre-wrap; overflow-wrap: anywhere; }

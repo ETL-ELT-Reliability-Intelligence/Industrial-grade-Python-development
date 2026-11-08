@@ -1,0 +1,146 @@
+/* Saved settings stay readable in a table; only its region scrolls on narrow screens. */
+.evaluation-configuration {
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.evaluation-configuration *, .evaluation-configuration *::before, .evaluation-configuration *::after {
+  box-sizing: border-box;
+  min-width: 0;
+}
+.evaluation-configuration .configuration-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px 18px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: var(--desktop);
+}
+.evaluation-configuration .configuration-properties {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  align-content: start;
+  margin: 0;
+}
+.evaluation-configuration .configuration-properties > dt,
+.evaluation-configuration .configuration-properties > dd {
+  margin: 0;
+  padding: 4px 5px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.evaluation-configuration .configuration-properties > dt { color: var(--muted); font-size: 11px; }
+.evaluation-configuration .configuration-properties > dd {
+  background: var(--list, var(--light));
+  font-size: 12px;
+}
+.evaluation-configuration .configuration-properties > dt:nth-last-child(2),
+.evaluation-configuration .configuration-properties > dd:last-child { border-bottom: 0; }
+.evaluation-configuration .configuration-overview > dd,
+.evaluation-configuration .configuration-retry > dd { background: transparent; }
+.evaluation-configuration .configuration-section { margin: 0; }
+.evaluation-configuration .configuration-section-heading,
+#quality .evaluation-configuration .configuration-section-heading {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: bold;
+}
+.evaluation-configuration .configuration-fingerprint {
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.evaluation-configuration .configuration-fingerprint code { font-size: inherit; }
+.evaluation-configuration .configuration-checks { max-width: 100%; }
+.evaluation-configuration .configuration-table-region {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid;
+  border-color: var(--line) var(--light) var(--light) var(--line);
+  background: var(--desktop);
+}
+.evaluation-configuration .configuration-table-region:focus-visible,
+.evaluation-configuration .configuration-fields:focus-visible { outline: 1px dotted currentColor; outline-offset: -3px; }
+.evaluation-configuration .configuration-check-table,
+#quality .evaluation-configuration .configuration-check-table {
+  width: 100%;
+  min-width: 820px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.evaluation-configuration .configuration-col-identity { width: 23%; }
+.evaluation-configuration .configuration-col-column { width: 17%; }
+.evaluation-configuration .configuration-col-parameters { width: 28%; }
+.evaluation-configuration .configuration-col-fail { width: 7%; }
+.evaluation-configuration .configuration-col-unknown { width: 11%; }
+.evaluation-configuration .configuration-col-extra { width: 14%; }
+.evaluation-configuration .configuration-check-table th,
+.evaluation-configuration .configuration-check-table td {
+  padding: 6px;
+  border: 1px solid var(--line);
+  vertical-align: top;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.evaluation-configuration .configuration-check-table > thead > tr > th { background: var(--desktop); font-weight: bold; overflow-wrap: normal; word-break: normal; }
+.evaluation-configuration .configuration-check-table > tbody > tr > td { background: var(--list, var(--light)); }
+.evaluation-configuration .configuration-check-key { font-size: 12px; }
+.evaluation-configuration .configuration-identifier-part { display: inline-block; max-width: 100%; vertical-align: top; overflow-wrap: anywhere; }
+.evaluation-configuration .configuration-check-kind { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+.evaluation-configuration .configuration-parameters > dt,
+.evaluation-configuration .configuration-parameters > dd { padding: 3px 4px; font-size: 11px; }
+.evaluation-configuration .configuration-parameters > dd { background: transparent; }
+.evaluation-configuration .configuration-empty { margin: 0; color: var(--muted); font-size: 11px; }
+.evaluation-configuration .configuration-value { white-space: pre-wrap; }
+.evaluation-configuration .configuration-value-item { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+.evaluation-configuration .configuration-values { display: block; }
+.evaluation-configuration .badge { max-width: 100%; overflow-wrap: anywhere; }
+.evaluation-configuration .configuration-check-properties,
+#quality .evaluation-configuration .configuration-check-properties { margin: 0; }
+.evaluation-configuration summary { cursor: pointer; overflow-wrap: anywhere; }
+.evaluation-configuration summary:focus-visible { outline: 1px dotted currentColor; outline-offset: 2px; }
+.evaluation-configuration .configuration-check-properties > summary { font-size: 11px; }
+.evaluation-configuration .configuration-check-metadata { display: block; margin-top: 6px; }
+.evaluation-configuration .configuration-check-metadata > dt { padding: 5px 0 0; border: 0; }
+.evaluation-configuration .configuration-check-metadata > dd { padding: 2px 0 5px; background: transparent; }
+.evaluation-configuration .configuration-extra,
+#quality .evaluation-configuration .configuration-extra { margin: 6px 0 0; }
+.evaluation-configuration .configuration-extra > summary { padding: 3px 0; color: var(--muted); font-size: 11px; }
+.evaluation-configuration .configuration-structured,
+#quality .evaluation-configuration .configuration-structured { margin: 0; }
+.evaluation-configuration .configuration-raw {
+  max-width: 100%;
+  margin: 5px 0 0;
+  padding: 7px;
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  background: var(--list, var(--light));
+  color: var(--ink);
+}
+.evaluation-configuration .configuration-fields-disclosure,
+#quality .evaluation-configuration .configuration-fields-disclosure { margin: 0; }
+.evaluation-configuration .configuration-fields-disclosure > summary { font-size: 11px; }
+.evaluation-configuration .configuration-fields { max-width: 100%; margin-top: 5px; overflow-x: auto; }
+.evaluation-configuration .configuration-field-table,
+#quality .evaluation-configuration .configuration-field-table { width: 100%; min-width: 0; table-layout: fixed; font-size: 11px; }
+.evaluation-configuration .configuration-field-table th,
+.evaluation-configuration .configuration-field-table td { padding: 4px; border-color: var(--line); overflow-wrap: anywhere; }
+.evaluation-configuration .configuration-field-table td { background: var(--list, var(--light)); }
+@media (max-width: 700px) {
+  .evaluation-configuration .configuration-header { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .evaluation-configuration .configuration-overview > dt,
+  .evaluation-configuration .configuration-overview > dd,
+  .evaluation-configuration .configuration-retry > dt,
+  .evaluation-configuration .configuration-retry > dd { padding: 4px; }
+}

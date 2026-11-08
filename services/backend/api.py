@@ -5,20 +5,22 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from contracts.state import Batch
+from contracts.state import Batch, PipelineRun
 
 from .models import (
     Dataset,
     EvaluationDetail,
     EvaluationSummary,
     Page,
+    Pipeline,
     QualityScope,
     ScopeQuality,
 )
-from .queries import DatasetQueries, EvaluationQueries
+from .queries import DatasetQueries, EvaluationQueries, PipelineQueries
 from .repository import ReadRepository
 
 router = APIRouter(prefix="/api/v1", tags=["datasets"])
+pipeline_router = APIRouter(prefix="/api/v1", tags=["pipelines"])
 
 
 def get_repository(request: Request) -> Iterator[ReadRepository]:
@@ -102,3 +104,28 @@ def evaluation(
     dataset_id: str, evaluation_id: str, queries: Evaluations
 ) -> EvaluationDetail:
     return queries.detail(dataset_id, evaluation_id)
+
+
+def get_pipeline_queries(repository: Repository) -> PipelineQueries:
+    return PipelineQueries(repository)
+
+
+Pipelines = Annotated[PipelineQueries, Depends(get_pipeline_queries)]
+PipelineId = Annotated[str, Query(min_length=1, pattern=r"\S")]
+
+
+@pipeline_router.get("/pipelines", response_model=Page[Pipeline])
+def pipelines(
+    queries: Pipelines, limit: Limit = 50, offset: Offset = 0
+) -> Page[Pipeline]:
+    return queries.pipelines(limit, offset)
+
+
+@pipeline_router.get("/pipeline-runs", response_model=Page[PipelineRun])
+def pipeline_runs(
+    pipeline_id: PipelineId,
+    queries: Pipelines,
+    limit: Limit = 50,
+    offset: Offset = 0,
+) -> Page[PipelineRun]:
+    return queries.runs(pipeline_id, limit, offset)

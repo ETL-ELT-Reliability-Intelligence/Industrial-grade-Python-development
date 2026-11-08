@@ -22,6 +22,10 @@ class Dataset(BaseModel):
     created_at: AwareDatetime
 
 
+class Pipeline(BaseModel):
+    pipeline_id: str
+
+
 class QualityScope(BaseModel):
     scope_id: str
     last_saved_at: AwareDatetime
