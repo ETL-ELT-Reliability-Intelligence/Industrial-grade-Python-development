@@ -16,15 +16,24 @@
 
 ```sh
 python -m alembic -c storage/postgres/alembic.ini upgrade head
-python -m services.stream_processor --kafka localhost:9092 --quality-config config/quality
+python -m services.stream_processor --kafka localhost:9092 \
+  --quality-config config/quality \
+  --anomaly-config config/anomaly \
+  --feature-config config/features.json
 ```
 
 Адрес Kafka также можно передать через `KAFKA_BOOTSTRAP_SERVERS`, а группу
 потребителей — через `KAFKA_GROUP_ID` (по умолчанию `stream-processor`).
 Для доступа к S3 используются `S3_ENDPOINT_URL`, `S3_ACCESS_KEY` и `S3_SECRET_KEY`.
 
-Пороги проверок задаются в YAML. Прежние переменные `QUALITY_MAX_*`
-и `QUALITY_ROW_COUNT_*` больше не используются.
+Пороги проверок задаются в YAML: `--quality-config PATH` (по умолчанию `config/quality`).
+Прежние переменные `QUALITY_MAX_*` и `QUALITY_ROW_COUNT_*` больше не используются.
+
+Флаг `--anomaly-config PATH` задаёт каталог с `defaults.yaml` или сам YAML-файл
+rule-based детектора аномалий (по умолчанию `config/anomaly`). Флаг
+`--feature-config PATH` подключает независимый JSON-профиль признаков
+(по умолчанию `config/features.json`). Профили признаков не меняют решение качества
+и описаны в [документации профилей](feature_profiles.md).
 
 После проверок качества для mock_orders выполняется [регрессия почасового объёма](order_volume.md).
 Она использует сохранённую модель, а обучение запускается отдельным ежедневным DAG.
@@ -46,9 +55,43 @@ python -m services.stream_processor --kafka localhost:9092 --quality-config conf
 транзакции. Пока новая оценка выполняется, старое решение убирается из текущего
 представления, но остаётся в истории.
 
-Если проверка возвращает FAIL, публикуется событие `data.quality.failed`.
-Пропуски и технические ошибки также видны в решении и истории, однако отдельного
-Kafka-события для них пока нет.
+Для каждой проверки с результатом FAIL публикуется событие `data.quality.failed`.
+Если итоговое решение — BLOCK без FAIL, события публикуются для блокирующих проверок,
+ещё не покрытых FAIL-событием. Статусы WARN и SKIPPED сами по себе событий не порождают,
+но остаются видны в решении и истории. `event_id` детерминирован от `dataset_id`,
+`scope_id`, `check_id` и `evaluation_id`, поэтому повторная обработка даёт тот же
+идентификатор.
+
+## Аномалии (rule-based)
+
+После публикации результатов качества обработчик сравнивает профиль текущей партии
+с сопоставимой историей: тем же датасетом, источником, гранулярностью, версией схемы,
+версией статистик и конфигурацией проверок. Детектор включается, если путь
+`--anomaly-config` существует: это каталог с `defaults.yaml` или сам файл.
+По умолчанию используется `config/anomaly` (файл `config/anomaly/defaults.yaml`).
+
+Конфигурация задаёт `detector`, `version`, минимальное число наблюдений
+`min_observations` и пороги отдельных метрик: `threshold_z`, `absolute_tolerance`,
+`relative_tolerance`. Метрики — `row_count`, `null_rate.<column>` и
+`distinct_ratio.<column>`; для метрик по колонкам история собирается отдельно
+для каждой колонки.
+
+Алгоритм:
+
+- ожидание — медиана исторических значений метрики;
+- разброс — `max(1.4826 * MAD, absolute_tolerance, relative_tolerance * |expected|, 1e-9)`;
+- `z = |actual - expected| / spread`; при `z >= threshold_z` фиксируется аномалия;
+- нормализованный `score = min(z / (2 * threshold_z), 1)` лежит в диапазоне 0..1.
+
+`anomaly_id` детерминирован: UUID5 от датасета, партии, метрики и версии конфигурации
+детектора, поэтому повторная обработка не создаёт дубль. Аномалия сохраняется в таблице
+`anomalies` и публикуется событием `anomaly.detected` с детерминированным `event_id`.
+
+[Регрессия объёма заказов](order_volume.md) — отдельный независимый механизм.
+Она также пишет в `anomalies` и публикует `anomaly.detected` при WARN, но использует
+`detector=lag_gradient_boosting` и собственный `anomaly_id`. Rule-based детектор
+помечает записи как `detector=robust-z`; источники аномалий различаются по полю
+`detector`.
 
 ## Повторы и восстановление
 
@@ -110,6 +153,9 @@ python -m pytest tests/stream_processor tests/data_quality -q
 
 Для PostgreSQL-тестов задайте `TEST_DATABASE_URL`, указывающую на отдельную
 тестовую БД: эти тесты очищают её содержимое.
+
+Тесты в `tests/ml` проверяют логику инференса и не требуют предварительно
+обученной модели из БД.
 
 [Настройки](../config/quality/README.md) · [Контракты](data_quality.md) ·
 [Хранение](storage.md)

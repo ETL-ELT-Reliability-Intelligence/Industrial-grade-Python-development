@@ -14,7 +14,11 @@ PostgreSQL с миграциями Alembic и слой доступа к дан�
 | `contracts/base.py` | общий Pydantic v2 `Contract` и ограничения полей |
 | `storage/repositories.py` | Protocol-интерфейсы репозиториев |
 | `storage/serialization.py` | JSON-представление результатов проверок для JSONB |
+| `storage/feature_profiles.py` | Protocol репозитория признаков и ошибка конфликта входных данных |
 | `storage/postgres/` | `connect()`, реализации репозиториев, Alembic (`alembic.ini`, `migrations/`) |
+| `storage/postgres/feature_profiles.py` | Хранение признаков: `feature_inputs`, `feature_profiles`, `feature_profile_evaluations`, `profiling_attempts` (миграция `0004`) |
+| `storage/postgres/order_volume.py` | Модели и прогнозы объёма заказов: `order_volume_models`, `order_volume_predictions` (миграция `0005`) |
+| `services/ml/` | Признаки, обучение и прогноз объёма заказов; модели хранятся в PostgreSQL (`bytea`) |
 | `docker-compose.yml` | Единая инфраструктура платформы, включая PostgreSQL для разработки и тестов |
 | `infra/postgres/init-test-db.sql` | Создание отдельной тестовой БД при первичной инициализации PostgreSQL |
 
@@ -44,6 +48,8 @@ timezone-aware, в JSON — ISO 8601. `event_id` — UUID, по умолчани
 решения и оценки качества без совместимости, удаляет метрику свежести и добавляет
 `dataset_profiles`: версионируемые сводки загрузок с периодом и допуском в эталон.
 Raw и batches сохраняются. Старые загрузки можно проверить повторной подачей событий.
+Миграция `0004` добавляет таблицы профилей признаков, миграция `0005` — модели
+и прогнозы объёма заказов.
 
 ## Таблицы
 
@@ -53,14 +59,17 @@ Raw и batches сохраняются. Старые загрузки можно 
 | История запусков | `pipeline_runs` |
 | Статистики | `dataset_metrics` |
 | Качество | `quality_evaluations`, `quality_executions`, `quality_check_results`, `quality_decisions` |
-| Аномалии | `anomalies` |
+| Признаки ML | `feature_inputs`, `feature_profiles`, `feature_profile_evaluations`, `profiling_attempts` (миграция `0004`) |
+| Объём заказов | `order_volume_models`, `order_volume_predictions` (миграция `0005`) |
+| Аномалии | `anomalies` — пишут оба детектора: `robust-z` и `lag_gradient_boosting` |
 | Инциденты | `incidents`, `incident_affected_datasets`, `incident_observations`, `incident_root_causes`, `incident_timeline`, `incident_impact` |
 | Lineage | `lineage_nodes`, `lineage_edges` |
 | ML и аудит | `ml_model_metadata`, `user_actions` |
 
 Таблицы инцидентов покрывают все поля модели `Incident` из
 `services/backend/models.py` (наблюдения, кандидаты причин, хронология,
-зона влияния). Репозиторий инцидентов, lineage и ML-метаданных — этап 2 и позже.
+зона влияния). Схема инцидентов и lineage описана, но репозитории для них пока
+не реализованы. Метаданные и артефакты ML-моделей уже хранятся в PostgreSQL.
 Все времена хранятся как `timestamptz`; ограничения (`CHECK`) дублируют
 валидацию контрактов, например `score` в диапазоне 0..1.
 
@@ -72,9 +81,18 @@ Raw и batches сохраняются. Старые загрузки можно 
 | `upsert_pipeline_run` | завершённый запуск не перезаписывается запоздавшим событием |
 | `save_schema` | версия схемы неизменна; другой набор полей — `ValueError` |
 | `save_metric` | ключ: датасет, область, метрика, колонка, `stats_version`; значение обновляется |
+| `save_profile` | ключ: датасет, область; профиль области заменяется |
+| `set_profile_eligible` | меняет только признак `eligible`; отсутствующая запись не создаётся |
 | `save_check_result` | ключ: `check_id`, датасет, область, колонка; побеждает последний результат |
 | `save_quality_decision` | решение области заменяется |
 | `save_anomaly`, `record_action` | уже сохранённый идентификатор не меняется |
+| `save_model` | модель с тем же `model_version` не перезаписывается (`ON CONFLICT DO NOTHING`) |
+| `save_prediction` | ключ — `evaluation_id`; повторный прогноз для оценки не перезаписывается (`ON CONFLICT DO NOTHING`) |
+| `save_feature_profile` | профиль неизменен; повтор возвращает сохранённый (`ON CONFLICT DO NOTHING`) |
+
+Профили признаков и идентичность входных данных (`feature_inputs`) неизменяемы:
+UPDATE запрещён триггерами БД. Изменённое содержимое под прежним `batch_id`
+обнаруживается как конфликт и не заменяет сохранённый профиль.
 
 Соединение создаёт `storage.postgres.connect(dsn)` (autocommit, UTC). Каждый
 вызов атомарен, составные вызовы открывают собственную транзакцию.
@@ -86,7 +104,7 @@ Raw и batches сохраняются. Старые загрузки можно 
 
 ```sh
 docker compose -f docker-compose.yml up -d --wait postgres
-python -m pip install -e ".[dev,storage]"
+uv sync --all-extras
 python -m alembic -c storage/postgres/alembic.ini upgrade head
 ```
 
@@ -118,6 +136,9 @@ python -m alembic -c storage/postgres/alembic.ini upgrade head
 Повтор старой оценки не заменяет более новую.
 
 Историю можно прочитать через методы репозитория `QualityRepository.list_evaluations`
-и `get_evaluation`. Отдельного HTTP API для неё пока нет.
+и `get_evaluation`, а также через HTTP API:
+`GET /api/v1/datasets/{dataset_id}/evaluations?scope_id=...` и
+`GET /api/v1/datasets/{dataset_id}/evaluations/{evaluation_id}`. Первый маршрут
+требует обязательный query-параметр `scope_id`.
 
 Порядок повторов и запуска новой оценки описан в [документации процессора](stream_processor.md).
