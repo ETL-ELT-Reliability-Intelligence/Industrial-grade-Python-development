@@ -1,3 +1,4 @@
+/** Coordinate dataset navigation, paginated requests and dashboard selection. */
 import { node, button, timestamp, table, dates, numbers } from "./ui.js";
 import { ApiClient } from "./api-client.js";
 import { EvaluationController } from "./evaluations.js";

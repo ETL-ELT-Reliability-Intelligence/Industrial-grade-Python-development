@@ -6,6 +6,8 @@ from contracts.events import DatasetIngestedEvent
 
 
 class BatchProfile(Contract):
+    """Versioned batch measurements with history eligibility and configuration identity."""
+
     event: DatasetIngestedEvent
     stats_version: str = "v2"
     config_hash: str

@@ -1,4 +1,7 @@
-"""Usage: python -m services.ingestion [--rows N] [--volume-factor F] [--kafka HOST:PORT] [--s3-endpoint URL --s3-bucket B]"""
+"""Run source ingestion from the command line.
+
+Use python -m services.ingestion --help for source, Kafka and S3 options.
+"""
 
 import argparse
 from pathlib import Path

@@ -12,6 +12,8 @@ Record = dict[str, Any]
 
 @dataclass(frozen=True)
 class SourceBatch:
+    """Source records with declared origin, period and completeness metadata."""
+
     dataset_id: str
     records: list[Record]
     source_id: str = "unspecified"
@@ -22,9 +24,13 @@ class SourceBatch:
 
 
 class Source(Protocol):
+    """Boundary for fetching one batch without assessing its quality."""
+
     dataset_id: str
 
-    def fetch(self) -> SourceBatch: ...
+    def fetch(self) -> SourceBatch:
+        """Fetch records and their source metadata as one batch."""
+        ...
 
 
 class MockApiSource:
@@ -82,6 +88,8 @@ class MockApiSource:
 
 
 class CsvSource:
+    """Read UTF-8 CSV records, converting empty cells to None."""
+
     def __init__(self, dataset_id: str, path: Path):
         self.dataset_id = dataset_id
         self._path = path

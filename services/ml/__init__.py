@@ -1,1 +1,1 @@
-"""Calendar regression for order-volume monitoring in the ingestion pipeline."""
+"""Lagged quantile boosting for hourly order-volume monitoring."""

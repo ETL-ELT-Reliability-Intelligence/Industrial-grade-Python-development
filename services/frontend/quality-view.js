@@ -1,3 +1,4 @@
+/** Render saved quality decisions, execution history and diagnostic evidence. */
 import { node, button, timestamp, table, evidence, badge, checkNames } from "./ui.js";
 
 const executionNames = {

@@ -51,7 +51,7 @@ STATS_VERSION = "v2"
 
 
 def _history_limit(evaluation) -> int:
-    """Ограничивает историю одинаково для проверок и детекции аномалий."""
+    """Bound history retrieval consistently for quality checks and anomaly detection."""
     max_window = max(
         (c.params.get("history_window", 10) for c in evaluation.suite.checks),
         default=10,
@@ -174,7 +174,7 @@ class StreamEventHandler:
             self._detect_anomalies(evaluation)
 
     def _check_reaction(self, check) -> QualityStatus:
-        """Повторяет логику реакции из finalize, чтобы знать, какие проверки блокируют."""
+        """Mirror finalization reactions to identify checks that block delivery."""
         if check.result is not None:
             if check.result.status is CheckStatus.FAIL:
                 return check.spec.on_fail
@@ -197,7 +197,7 @@ class StreamEventHandler:
         return reaction
 
     def _detect_anomalies(self, evaluation) -> None:
-        """Ищет отклонения доставленного профиля относительно его допустимой истории."""
+        """Persist and publish deviations against the delivered profile's eligible history."""
         event = evaluation.event
         profile = self._metrics.get_profile(event.dataset_id, event.batch_id)
         if profile is None:

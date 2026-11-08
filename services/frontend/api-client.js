@@ -4,6 +4,7 @@ export class ApiClient {
     this.onSuccess = onSuccess;
   }
 
+  /** Fetch versioned API JSON; reject HTTP errors and aborted responses. */
   async get(path, signal) {
     const response = await fetch(`/api/v1${path}`, { signal });
     if (!response.ok) {

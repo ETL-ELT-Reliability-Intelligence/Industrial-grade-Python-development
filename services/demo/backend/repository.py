@@ -1,4 +1,4 @@
-"""Replace this read adapter with PostgreSQL when the upstream contract is agreed."""
+"""Read incident snapshots from a local fixture for the isolated demo."""
 
 import json
 from datetime import datetime
@@ -9,15 +9,23 @@ from .models import Incident
 
 
 class IncidentRepository(Protocol):
+    """Read incidents with the origin and timestamp of their snapshot."""
+
     data_mode: str
     snapshot_at: datetime
 
-    def list_incidents(self) -> list[Incident]: ...
+    def list_incidents(self) -> list[Incident]:
+        """Return incidents ordered by detection time, newest first."""
+        ...
 
-    def get_incident(self, incident_id: str) -> Incident | None: ...
+    def get_incident(self, incident_id: str) -> Incident | None:
+        """Return the identified incident, or None if absent."""
+        ...
 
 
 class DemoIncidentRepository:
+    """Load a validated incident snapshot from JSON without accessing shared storage."""
+
     data_mode = "demo"
 
     def __init__(self, fixture_path: Path | None = None) -> None:
