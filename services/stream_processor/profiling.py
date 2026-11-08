@@ -9,6 +9,7 @@ import json
 from contracts.profiles import BatchProfile
 from contracts.quality_config import PARAMETERS
 from data_quality.dates import aware_datetime
+from services.ml.volume import observe_hour
 from .statistics import field_type
 
 
@@ -139,4 +140,5 @@ def build_profile(event, records, suite):
         row_count=len(records),
         columns=summaries,
         checks=checks,
+        order_volume=observe_hour(event, records) if event.dataset_id == "mock_orders" else None,
     )
