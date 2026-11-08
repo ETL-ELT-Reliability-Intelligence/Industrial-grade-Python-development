@@ -1,9 +1,8 @@
 """Persistent model versions and idempotent regression observations."""
 
 from psycopg.types.json import Jsonb
-import json
-from contracts.profiles import BatchProfile
 from services.ml.volume import VERSION, HOUR
+from storage.postgres.repositories import PostgresMetricRepository
 
 
 class PostgresOrderVolumeRepository:
@@ -30,15 +29,10 @@ class PostgresOrderVolumeRepository:
         ).fetchone()
 
     def load_history(self, start):
-        rows = self.connection.execute(
-            "SELECT profile FROM dataset_profiles WHERE dataset_id = 'mock_orders' "
-            "AND profile->'event'->>'source_id' = 'mock' "
-            "AND (profile->'event'->>'period_start')::timestamptz >= %s "
-            "AND (profile->'event'->>'period_start')::timestamptz < %s "
-            "AND (profile->'event'->>'received_at')::timestamptz <= %s",
-            (start - 168 * HOUR, start, start),
-        ).fetchall()
-        return [BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows]
+        return PostgresMetricRepository(self.connection).list_profiles_between(
+            "mock_orders", source_id="mock", start=start - 168 * HOUR,
+            end=start, as_of=start, limit=500,
+        )
 
     def get_prediction(self, evaluation_id):
         row = self.connection.execute(

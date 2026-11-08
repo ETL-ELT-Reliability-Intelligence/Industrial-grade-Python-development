@@ -1,7 +1,7 @@
 """Train and register an order-volume model from persisted source observations."""
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 
@@ -14,8 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 def train_order_volume(connection, cutoff):
-    profiles = PostgresMetricRepository(connection).list_profiles("mock_orders")
-    available = [p for p in profiles if p.event.source_id == "mock" and p.event.received_at <= cutoff]
+    start = (cutoff.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+             - timedelta(hours=1)) - timedelta(days=21) - timedelta(hours=168)
+    available = PostgresMetricRepository(connection).list_profiles_between(
+        "mock_orders",
+        source_id="mock",
+        start=start,
+        end=cutoff,
+        as_of=cutoff,
+        limit=10000,
+    )
     if not available:
         result = {"status": "SKIPPED", "reason": "insufficient_training_history"}
     else:
