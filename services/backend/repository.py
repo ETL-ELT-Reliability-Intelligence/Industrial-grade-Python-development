@@ -2,12 +2,13 @@
 
 from typing import Protocol
 
-from contracts.state import Batch
+from contracts.state import Batch, PipelineRun
 
 from .models import (
     Dataset,
     EvaluationDetail,
     EvaluationSummary,
+    Pipeline,
     QualityScope,
     ScopeQuality,
 )
@@ -67,9 +68,15 @@ class DatasetReadRepository(Protocol):
         ...
 
 
-class ReadRepository(DatasetReadRepository, EvaluationRepository, Protocol):
-    """Combined application read boundary with a readiness probe."""
+class PipelineReadRepository(Protocol):
+    def list_pipelines(self, limit: int, offset: int) -> list[Pipeline]: ...
 
-    def ready(self) -> None:
-        """Verify storage is usable or raise when the readiness probe fails."""
-        ...
+    def list_pipeline_runs(
+        self, pipeline_id: str, limit: int, offset: int
+    ) -> list[PipelineRun]: ...
+
+
+class ReadRepository(
+    DatasetReadRepository, EvaluationRepository, PipelineReadRepository, Protocol
+):
+    def ready(self) -> None: ...

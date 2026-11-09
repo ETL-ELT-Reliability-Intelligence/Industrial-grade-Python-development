@@ -69,6 +69,7 @@ html[data-theme="cs"] {
 [data-theme="cs"] .status-pending, [data-theme="cs"] .status-running, [data-theme="cs"] .status-skipped { color: #e0cea1; }
 [data-theme="cs"] .status-completed { color: #b9d595; }
 [data-theme="cs"] .status-error { color: #f4baa4; }
+[data-theme="cs"] .catalog-item.pipeline-item { grid-template-columns: minmax(0, 1fr); }
 [data-theme="cs"] footer { border-color: var(--line); }
 
 /* Wizard: classic gray Windows utility; the assistant never covers data. */
@@ -80,22 +81,24 @@ html[data-theme="wizard"] { --desktop: #c0c0c0; --blue: #000080; --dark: #404040
 [data-theme="wizard"] .workspace { grid-template-columns: 235px minmax(0, 1fr); }
 [data-theme="wizard"] .page-header h1 { font-size: 18px; }
 [data-theme="wizard"] .detail-panel { padding: 10px 12px; display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); column-gap: 12px; align-items: start; }
-[data-theme="wizard"] #dataset, [data-theme="wizard"] #quality-section { grid-column: 1 / -1; min-width: 0; }
+[data-theme="wizard"] #dataset, [data-theme="wizard"] #batches-section, [data-theme="wizard"] #scopes-section, [data-theme="wizard"] #quality-section { grid-column: 1 / -1; min-width: 0; }
 [data-theme="wizard"] .detail-section { min-width: 0; }
 [data-theme="wizard"] .detail-heading { margin-left: -12px; margin-right: -12px; }
 [data-theme="wizard"] .detail-section > h3 { background: #808080; color: #fff; border: 0; padding: 4px 6px; }
 [data-theme="wizard"] .decision { background: #ffffe1; border: 1px solid #808080; }
 [data-theme="wizard"] .decision h3 { background: transparent; border: 0; padding: 0; }
 [data-theme="wizard"] .table-wrap table { min-width: 340px; }
+[data-theme="wizard"] .batch-table-wrap table { min-width: 640px; }
 [data-theme="wizard"] #quality > .table-wrap table { min-width: 850px; }
 [data-theme="wizard"] .badge { background: #fff; }
 [data-theme="wizard"] .wizard-assistant .panel-header { background: #808080; color: #fff; }
 [data-theme="wizard"] .catalog-item { padding: 8px; }
 [data-theme="wizard"] .incident-title { font-size: 12px; }
+[data-theme="wizard"] #pipeline-detail { display: block; }
 
 @media (max-width: 1200px) { [data-theme="wizard"] .detail-panel { display: block; } }
 @media (max-width: 1000px) { [data-theme="cs"] .workspace { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 800px) { [data-theme="wizard"] .workspace { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1000px) { [data-theme="wizard"] .workspace { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) {
   .theme-picker { width: 100%; margin-left: 0; }
   [data-theme="cs"] .sidebar, [data-theme="wizard"] .sidebar { margin: 8px 8px 0; }

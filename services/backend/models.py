@@ -26,6 +26,10 @@ class Dataset(BaseModel):
     created_at: AwareDatetime
 
 
+class Pipeline(BaseModel):
+    pipeline_id: str
+
+
 class QualityScope(BaseModel):
     """Scope identity with the latest time its quality evidence was saved."""
 
