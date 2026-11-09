@@ -9,6 +9,8 @@ from contracts.quality import CheckKind, QualityStatus, SchemaField
 
 
 class RetrySettings(Contract):
+    """Attempt budget with one bounded delay in seconds for each retry."""
+
     max_attempts: int = Field(default=3, ge=1, le=10)
     delays_seconds: tuple[float, ...] = (5.0, 15.0)
 
@@ -22,6 +24,8 @@ class RetrySettings(Contract):
 
 
 class Reactions(Contract):
+    """Responses to failed or unavailable checks; problems cannot become PASS."""
+
     on_fail: QualityStatus = QualityStatus.BLOCK
     on_unknown: QualityStatus = QualityStatus.WARN
 
@@ -33,6 +37,8 @@ class Reactions(Contract):
 
 
 class HistoryParams(Contract):
+    """History window size, minimum evidence and robust spread multiplier."""
+
     history_window: int = Field(default=10, ge=1, le=1000)
     min_history: int = Field(default=3, ge=1)
     mad_multiplier: float = Field(default=3.0, ge=0, allow_inf_nan=False)
@@ -45,6 +51,8 @@ class HistoryParams(Contract):
 
 
 class NullRateParams(HistoryParams):
+    """Fixed or historical null-rate limits with an optional row filter."""
+
     mode: Literal["historical", "fixed"] = "historical"
     max_null_rate: float = Field(default=0.05, ge=0, le=1, allow_inf_nan=False)
     min_increase: float = Field(default=0.05, ge=0, le=1, allow_inf_nan=False)
@@ -60,6 +68,8 @@ class NullRateParams(HistoryParams):
 
 
 class RowCountParams(HistoryParams):
+    """Fixed count bounds or tolerances around a historical baseline."""
+
     mode: Literal["historical", "fixed"] = "historical"
     relative_tolerance: float = Field(default=0.2, ge=0, allow_inf_nan=False)
     absolute_tolerance: int = Field(default=1, ge=0)
@@ -83,6 +93,8 @@ class RowCountParams(HistoryParams):
 
 
 class SchemaParams(Contract):
+    """Expected fields, or None to use the previously stored schema."""
+
     fields: tuple[SchemaField, ...] | None = None
     allow_extra_fields: bool = False
 
@@ -96,6 +108,8 @@ class SchemaParams(Contract):
 
 
 class CardinalityParams(HistoryParams):
+    """Sample requirements and tolerances for historical distinct-value checks."""
+
     min_samples: int = Field(default=30, ge=1)
     volume_tolerance: float = Field(default=0.25, ge=0, le=1, allow_inf_nan=False)
     count_tolerance: float = Field(default=0.2, ge=0, allow_inf_nan=False)
@@ -103,6 +117,8 @@ class CardinalityParams(HistoryParams):
 
 
 class DistributionParams(HistoryParams):
+    """Distribution comparison settings with ordered bins for numeric values."""
+
     data_type: Literal["numeric", "categorical"]
     bins: tuple[float, ...] = ()
     min_samples: int = Field(default=30, ge=1)
@@ -123,6 +139,8 @@ class DistributionParams(HistoryParams):
 
 
 class ValueRuleParams(Contract):
+    """Value validation rule, null handling and allowed invalid fraction."""
+
     rule: Literal["non_negative", "datetime", "date_order", "aware_datetime", "not_future"]
     other_column: NonBlankText | None = None
     allow_null: bool = False
@@ -146,6 +164,8 @@ PARAMETERS = {
 
 
 class CheckSpec(Reactions):
+    """Named check with validated kind-specific parameters and policy reactions."""
+
     key: NonBlankText
     kind: CheckKind
     column: NonBlankText | None = None
@@ -174,6 +194,8 @@ class CheckSpec(Reactions):
 
 
 class CheckSuite(Contract):
+    """Nonempty dataset check plan with unique keys and a shared retry budget."""
+
     dataset_id: NonBlankText
     version: int = Field(default=1, ge=1)
     retry: RetrySettings = Field(default_factory=RetrySettings)

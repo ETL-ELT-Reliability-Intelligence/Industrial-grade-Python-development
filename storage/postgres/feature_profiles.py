@@ -9,6 +9,8 @@ from storage.feature_profiles import InputConflict
 
 
 class FeatureRepositoryMixin:
+    """Implement feature persistence using the host repository's PostgreSQL connection."""
+
     def register_feature_input(self, dataset_id, batch_id, sha256):
         self._ensure_dataset(dataset_id)
         self._connection.execute(

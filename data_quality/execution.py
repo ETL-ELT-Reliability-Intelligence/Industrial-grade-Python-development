@@ -38,6 +38,11 @@ REGISTRY = {
 
 
 def prepare_check(check, stats, event, evaluated_at, schema, history, profile):
+    """Freeze observations, bounds and baseline provenance for one check.
+
+    Return a copied execution marked SKIPPED when preparation supplies a skip
+    reason, otherwise PENDING. The input execution is not mutated.
+    """
     params = PARAMETERS[check.spec.kind].model_validate_json(
         json.dumps(check.spec.params)
     )
@@ -70,6 +75,7 @@ def prepare_check(check, stats, event, evaluated_at, schema, history, profile):
 
 
 def execute_check(check, event):
+    """Evaluate frozen evidence and attach its scope and baseline provenance."""
     result = REGISTRY[check.spec.kind](
         check.observation,
         check.constraint,
@@ -100,7 +106,15 @@ def execute_check(check, event):
 def finalize(
     suite, scope_id: str, executions: tuple[CheckExecution, ...]
 ) -> QualityDecision:
-    """Reject foreign/duplicate evidence; missing mandatory checks always block."""
+    """Aggregate completed, skipped and failed executions into a quality decision.
+
+    Missing required checks block; missing optional checks warn. Recognized
+    skips use the configured reactions. No checks or actions are executed.
+
+    Raises:
+        ValueError: Evidence is foreign, duplicated, inconsistent with the plan,
+            or still pending.
+    """
     expected = {f"{suite.dataset_id}.{c.key}": c for c in suite.checks}
     seen = {}
     for item in executions:

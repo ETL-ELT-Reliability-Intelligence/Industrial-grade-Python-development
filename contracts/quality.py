@@ -59,6 +59,8 @@ class ScalarObservation(Contract):
 
 
 class ScalarConstraint(Contract):
+    """Inclusive optional bounds for a derived scalar score."""
+
     minimum: float | None = Field(default=None, allow_inf_nan=False)
     maximum: float | None = Field(default=None, allow_inf_nan=False)
 

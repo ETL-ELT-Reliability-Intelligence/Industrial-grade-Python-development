@@ -27,27 +27,45 @@ class EvaluationNotFound(Exception):
 
 
 class EvaluationRepository(Protocol):
+    """Read evaluation summaries and details within a dataset."""
+
     def list_evaluations(
         self, dataset_id: str, scope_id: str, limit: int, offset: int
-    ) -> list[EvaluationSummary]: ...
+    ) -> list[EvaluationSummary]:
+        """Return scope evaluations by descending creation sequence, with pagination."""
+        ...
 
     def get_evaluation(
         self, dataset_id: str, evaluation_id: str
-    ) -> EvaluationDetail | None: ...
+    ) -> EvaluationDetail | None:
+        """Return evaluation details, or None if absent or owned by another dataset."""
+        ...
 
 
 class DatasetReadRepository(Protocol):
-    def list_datasets(self, limit: int, offset: int) -> list[Dataset]: ...
+    """Read dataset metadata and stored quality evidence without evaluating rules."""
 
-    def get_dataset(self, dataset_id: str) -> Dataset | None: ...
+    def list_datasets(self, limit: int, offset: int) -> list[Dataset]:
+        """Return datasets ordered by identifier with the requested limit and offset."""
+        ...
 
-    def list_batches(self, dataset_id: str, limit: int, offset: int) -> list[Batch]: ...
+    def get_dataset(self, dataset_id: str) -> Dataset | None:
+        """Return dataset metadata, or None if absent."""
+        ...
+
+    def list_batches(self, dataset_id: str, limit: int, offset: int) -> list[Batch]:
+        """Return batches by descending receipt time and batch ID, with pagination."""
+        ...
 
     def list_quality_scopes(
         self, dataset_id: str, limit: int, offset: int
-    ) -> list[QualityScope]: ...
+    ) -> list[QualityScope]:
+        """Return scopes by latest save time descending, breaking ties by scope ID."""
+        ...
 
-    def get_quality(self, dataset_id: str, scope_id: str) -> ScopeQuality: ...
+    def get_quality(self, dataset_id: str, scope_id: str) -> ScopeQuality:
+        """Return stored checks and an optional decision; absent evidence stays empty."""
+        ...
 
 
 class PipelineReadRepository(Protocol):

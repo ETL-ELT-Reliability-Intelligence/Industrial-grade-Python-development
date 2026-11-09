@@ -13,6 +13,7 @@ FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
 
 
 def create_app(repository: IncidentRepository | None = None) -> FastAPI:
+    """Build the isolated demo API and dashboard from the supplied incident repository."""
     app = FastAPI(
         title="ETL/ELT Reliability Intelligence — Application API",
         version="0.1.0",

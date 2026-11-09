@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 def train_order_volume(connection, cutoff):
+    """Train and persist a model using mock observations received by cutoff.
+
+    Return TRAINED with model identity, or SKIPPED when continuous training
+    history is insufficient. Training and storage failures propagate.
+    """
     profiles = PostgresMetricRepository(connection).list_profiles("mock_orders")
     available = [p for p in profiles if p.event.source_id == "mock" and p.event.received_at <= cutoff]
     if not available:

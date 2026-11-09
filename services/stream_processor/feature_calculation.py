@@ -11,7 +11,11 @@ from contracts.features import ColumnFeatures, FeatureDefinition, FeatureProfile
 
 
 def implementation_version() -> str:
-    """Fingerprint the implementation and its schema, including arithmetic semantics."""
+    """Hash the full implementation and contract sources, normalizing newlines.
+
+    Comments and docstrings also affect this version because source text is
+    hashed without stripping non-executable content.
+    """
     import contracts.features as contract
 
     digest = hashlib.sha256()
@@ -22,10 +26,12 @@ def implementation_version() -> str:
 
 
 def canonical(value):
+    """Encode values as compact JSON with stable object key order."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def numeric(value):
+    """Parse a finite Decimal from a string or number, rejecting booleans."""
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         raise ValueError("not numeric")
     result = Decimal(str(value))
@@ -35,6 +41,12 @@ def numeric(value):
 
 
 def calculate_column(records, column, definition):
+    """Calculate a column summary using the declared numeric or category settings.
+
+    Missing keys and nulls share the null count. Numeric parse errors are
+    counted separately; categorical frequencies use non-null rows as their
+    denominator. Undefined ratios and empty numeric summaries remain None.
+    """
     present = [r[column.name] for r in records if r.get(column.name) is not None]
     count = len(records)
     distinct = len({canonical(v) for v in present})
@@ -101,6 +113,7 @@ def calculate_column(records, column, definition):
 def build_feature_profile(
     event, records, definition: FeatureDefinition, raw_sha256, implementation
 ):
+    """Build a snapshot keyed by batch, raw checksum and calculation versions."""
     identity = canonical(
         [
             event.dataset_id,

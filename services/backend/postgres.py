@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 class PostgresReadRepository:
+    """Read shared state through a caller-owned PostgreSQL connection."""
+
     def __init__(self, connection: psycopg.Connection[dict[str, Any]]) -> None:
         self.connection = connection
         self.evaluations = PostgresEvaluationReader(connection)
@@ -136,6 +138,12 @@ class PostgresReadRepository:
 
 @contextmanager
 def open_repository(dsn: str | None) -> Iterator[PostgresReadRepository]:
+    """Yield a repository within a read-only, repeatable-read transaction.
+
+    Close the connection on exit. Connection, statement and lock waits are
+    bounded. Translate unavailable storage and missing schema or permissions
+    to StorageUnavailable; unrelated programming errors propagate.
+    """
     if not dsn:
         raise StorageUnavailable
     try:

@@ -1,3 +1,4 @@
+/** Render the isolated incident demo and cancel superseded API requests. */
 "use strict";
 
 const statusLabels = { open: "Открыт", investigating: "В расследовании", resolved: "Закрыт" };

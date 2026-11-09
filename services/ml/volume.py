@@ -21,7 +21,11 @@ FEATURES = (["hour_sin", "hour_cos", "weekday_sin", "weekday_cos", "weekend"]
 
 
 def observe_hour(event, records):
-    """Only an explicitly complete hour can represent zero orders."""
+    """Measure orders in a closed, complete UTC hour or return a reason code.
+
+    The interval includes its start and excludes its end. Zero is valid only
+    for an explicitly complete hour; invalid timestamps reject the observation.
+    """
     start, end = event.period_start, event.period_end
     if event.granularity != "hour" or not event.complete or start is None or end is None:
         return {"reason": "incomplete_hour", "version": OBSERVATION_VERSION}
@@ -43,6 +47,7 @@ def observe_hour(event, records):
 
 
 def calendar_features(starts):
+    """Encode UTC hour, weekday and weekend indicators in feature order."""
     result = []
     for start in starts:
         start = start.astimezone(timezone.utc)
@@ -55,6 +60,7 @@ def calendar_features(starts):
 
 
 def latest_profiles(profiles, as_of):
+    """Select the latest mock-source revision per hour received no later than as_of."""
     latest = {}
     for profile in sorted(profiles, key=lambda p: (p.event.received_at, p.event.batch_id)):
         event = profile.event
@@ -65,6 +71,7 @@ def latest_profiles(profiles, as_of):
 
 
 def observed_count(profile):
+    """Return a compatible complete hourly count, or None when unavailable."""
     if profile is None:
         return None
     event = profile.event
@@ -77,10 +84,11 @@ def observed_count(profile):
 
 
 def lag_features(start, profiles):
-    """Point-in-time features: only prior hours received by forecast origin.
+    """Build lag features using prior hours received by the forecast origin.
 
-    A delayed lag (often t-1) stays missing. At least 80% of the preceding week,
-    including t-24 and t-168, is needed; partial rolling windows expose coverage.
+    Return None unless at least 80% of the preceding week, including t-24 and
+    t-168, is available. Missing lags remain None; partial rolling windows
+    include coverage counts. Return feature values and source batch IDs.
     """
     latest = latest_profiles(profiles, start)
     history = {lag: observed_count(latest.get(start - lag * HOUR)) for lag in range(1, 169)}
@@ -98,7 +106,11 @@ def lag_features(start, profiles):
 
 
 def training_rows(profiles, cutoff):
-    """Latest revision wins even when invalid; missing hours never become zeros."""
+    """Build 21 consecutive target days with point-in-time lag features.
+
+    Return an empty list if any target or required history is unavailable.
+    The latest revision wins even when invalid; missing hours never become zero.
+    """
     end = cutoff.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0) - HOUR
     start = end - timedelta(days=21)
     profiles = list(profiles)
@@ -116,10 +128,17 @@ def training_rows(profiles, cutoff):
 
 
 def deviation(actual, expected):
+    """Scale absolute error by the expected count, with a denominator floor of one."""
     return abs(actual - expected) / max(expected, 1.0)
 
 
 def train(rows, cutoff):
+    """Fit mean and quantile models and calibrate their prediction interval.
+
+    Require 21 hourly target days: 14 for training and seven for calibration.
+    Return serialized models, provenance metadata and a metadata-derived version.
+    Raise ValueError when the target row count differs from 21 days.
+    """
     import joblib
     import sklearn
     from sklearn.ensemble import HistGradientBoostingRegressor
@@ -165,17 +184,25 @@ def train(rows, cutoff):
 
 
 def bounds(expected, lower, upper, padding):
+    """Expand quantile bounds by minimum relative tolerance and calibrated padding."""
     scale = max(expected, 1.0)
     return (max(0.0, min(float(lower), expected - 0.2 * scale) - padding * scale),
             max(float(upper), expected + 0.2 * scale) + padding * scale)
 
 
 class Predictor:
+    """Cache a deserialized model version for repeated hourly predictions."""
+
     def __init__(self):
         self.version = None
         self.model = None
 
     def predict(self, stored, start, actual, inputs):
+        """Predict an interval and report WARN when the actual count falls outside.
+
+        Raise ValueError when implementation, feature order or scikit-learn version
+        differs from stored metadata. The result does not change quality policy.
+        """
         import joblib
         import sklearn
 

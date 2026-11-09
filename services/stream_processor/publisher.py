@@ -10,7 +10,11 @@ from contracts.state import Anomaly
 
 
 class EventPublisher(Protocol):
-    def publish(self, event: Event) -> None: ...
+    """Boundary for publishing quality failures and detected anomalies."""
+
+    def publish(self, event: Event) -> None:
+        """Publish an event or raise when delivery fails."""
+        ...
 
 
 class NoOpPublisher:
@@ -78,7 +82,7 @@ def build_quality_failed_event(result: CheckResult, failed_at: datetime, *, eval
 
 
 def build_anomaly_event(anomaly: Anomaly) -> AnomalyDetectedEvent:
-    """Собирает AnomalyDetectedEvent с детерминированным event_id."""
+    """Build an anomaly event with a deterministic ID derived from the anomaly ID."""
     return AnomalyDetectedEvent(
         event_id=uuid5(NAMESPACE_URL, f"anomaly.detected:{anomaly.anomaly_id}"),
         anomaly_id=anomaly.anomaly_id,

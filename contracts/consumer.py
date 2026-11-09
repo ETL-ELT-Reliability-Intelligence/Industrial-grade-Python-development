@@ -9,10 +9,13 @@ from .events import Event, EventType, parse_event
 
 
 class Deduplicator:
+    """Track event identities in memory for the lifetime of this instance."""
+
     def __init__(self) -> None:
         self._seen: set[str] = set()
 
     def is_new(self, event: Event) -> bool:
+        """Record an unseen deduplication key and return whether it was new."""
         if event.dedup_key in self._seen:
             return False
         self._seen.add(event.dedup_key)
@@ -20,7 +23,12 @@ class Deduplicator:
 
 
 class KafkaEventConsumer:
-    """Kafka client is imported lazily so tests need no broker."""
+    """Read validated Kafka events with explicit offset commits.
+
+    Malformed messages are recorded in invalid and committed immediately.
+    Valid messages are returned to the caller, which owns processing and commit.
+    The Kafka client is imported lazily.
+    """
 
     def __init__(self, bootstrap_servers: str, group_id: str, topics: list[str] | None = None):
         from confluent_kafka import Consumer
@@ -37,7 +45,12 @@ class KafkaEventConsumer:
         self.invalid: list[tuple[bytes, Exception]] = []
 
     def poll(self, timeout: float = 1.0) -> Event | None:
-        """Next valid event, or None if nothing arrived. Call `commit()` after handling it."""
+        """Poll once for a validated event.
+
+        Return None on timeout, an unknown topic, or an invalid message. Invalid
+        messages are recorded and committed; valid events require the caller to
+        commit after successful processing. Other broker errors raise RuntimeError.
+        """
         message = self._consumer.poll(timeout)
         if message is None:
             return None
@@ -55,6 +68,7 @@ class KafkaEventConsumer:
             return None
 
     def commit(self) -> None:
+        """Synchronously commit the consumer offsets after successful handling."""
         self._consumer.commit(asynchronous=False)
 
     def close(self) -> None:
