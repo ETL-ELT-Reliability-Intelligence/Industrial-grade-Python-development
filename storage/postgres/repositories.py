@@ -238,6 +238,36 @@ class PostgresMetricRepository(FeatureRepositoryMixin, _PostgresRepository):
             BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows
         ]
 
+    def list_profiles_between(
+        self,
+        dataset_id: str,
+        *,
+        source_id: str,
+        start: datetime,
+        end: datetime,
+        as_of: datetime,
+        limit: int = 1000,
+    ) -> list[BatchProfile]:
+        _aware(start, "start")
+        _aware(end, "end")
+        _aware(as_of, "as_of")
+        rows = self._connection.execute(
+            "SELECT profile FROM dataset_profiles "
+            "WHERE dataset_id = %s "
+            "AND profile->'event'->>'source_id' = %s "
+            "AND (profile->'event'->>'period_start')::timestamptz >= %s "
+            "AND (profile->'event'->>'period_start')::timestamptz < %s "
+            "AND (profile->'event'->>'received_at')::timestamptz <= %s "
+            "ORDER BY (profile->'event'->>'period_start')::timestamptz, "
+            "(profile->'event'->>'received_at')::timestamptz, "
+            "(profile->'event'->>'batch_id')::text "
+            "LIMIT %s",
+            (dataset_id, source_id, start, end, as_of, _limit(limit)),
+        ).fetchall()
+        return [
+            BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows
+        ]
+
     def list_comparable_profiles(
         self,
         dataset_id: str,

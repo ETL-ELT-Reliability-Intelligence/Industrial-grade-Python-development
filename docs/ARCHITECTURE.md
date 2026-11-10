@@ -449,19 +449,19 @@ row_count_anomaly
 - incidents;
 - lineage metadata;
 - historical metrics;
-- ML model metadata.
+- ML model metadata в JSONB и сериализованные артефакты моделей (`bytea`) в `order_volume_models`.
 
 ### Object Storage
 
 Например MinIO.
 
-Хранит:
+В текущем инкременте Object Storage используется как источник `raw_uri`:
+ingestion сохраняет сырые JSONL-файлы, которые читает stream processor.
+Parquet, исторические снимки и большие результаты batch processing остаются
+вне рамок текущего инкремента.
 
-- raw datasets;
-- Parquet;
-- historical snapshots;
-- ML artifacts;
-- большие результаты batch processing.
+Метаданные ML-моделей хранятся в JSONB, а сериализованные артефакты — в колонке
+типа `bytea` таблицы `order_volume_models`; Object Storage для них пока не используется.
 
 ### Redis
 
@@ -542,6 +542,11 @@ Actual:
   "model_version": "isolation-forest-v1"
 }
 ```
+
+В текущем инкременте в таблицу `anomalies` пишут два независимых источника:
+rule-based детектор профилей партий (`detector=robust-z`) и ML-регрессия объёма
+заказов (`detector=lag_gradient_boosting`). Оба публикуют `anomaly.detected`;
+источник различается по полю `detector`.
 
 ---
 
@@ -1082,8 +1087,8 @@ Investigation
 - dataset statistics;
 - MVP онлайн-детекции аномалий (rule-based) в Speed Layer.
 
-MVP онлайн-детекции аномалий (rule-based) реализуется в Speed Layer (роль №2) как осознанное архитектурное решение.
-ML-модели, data drift и feature engineering остаются ответственностью роли №3.
+MVP онлайн-детекции аномалий (rule-based) реализуется в Speed Layer как осознанное архитектурное решение.
+ML-модели, data drift и feature engineering остаются отдельной областью ответственности.
 
 ## Participant 3 — Reliability Intelligence
 

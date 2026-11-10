@@ -89,6 +89,19 @@ class MetricRepository(FeatureRepository, Protocol):
         """Return all stored dataset profiles without guaranteeing their order."""
         ...
 
+    def list_profiles_between(
+        self,
+        dataset_id: str,
+        *,
+        source_id: str,
+        start: datetime,
+        end: datetime,
+        as_of: datetime,
+        limit: int = 1000,
+    ) -> list[BatchProfile]:
+        """Return profiles within a period range, received on or before as_of, ordered chronologically."""
+        ...
+
     def list_comparable_profiles(
         self,
         dataset_id: str,

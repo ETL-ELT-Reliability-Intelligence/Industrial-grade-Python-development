@@ -133,6 +133,8 @@ services:
         condition: service_completed_successfully
       kafka:
         condition: service_started
+      rustfs:
+        condition: service_started
     restart: unless-stopped
     environment:
       PYTHONPATH: /app
