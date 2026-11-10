@@ -374,6 +374,11 @@ class PostgresQualityRepository(_PostgresRepository):
 
     @contextmanager
     def evaluation_lock(self, dataset_id: str, scope_id: str):
+        """Hold a session advisory lock and release it when the context exits.
+
+        The lock spans repository transactions and serializes work for the hashed
+        dataset/scope key. It does not itself open a transaction.
+        """
         key = json.dumps([dataset_id, scope_id])
         self._connection.execute(
             "SELECT pg_advisory_lock(hashtextextended(%s, 0))", (key,)

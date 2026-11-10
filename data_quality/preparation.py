@@ -15,6 +15,7 @@ from contracts.quality import (
 
 
 def spread(values, multiplier, floor_value):
+    """Return the median and scaled MAD, bounded below by floor_value."""
     center = median(values)
     mad = median(abs(x - center) for x in values)
     return center, max(multiplier * 1.4826 * mad, floor_value)

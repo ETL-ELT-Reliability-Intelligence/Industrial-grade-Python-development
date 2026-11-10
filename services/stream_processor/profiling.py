@@ -14,6 +14,7 @@ from .statistics import field_type
 
 
 def number(value):
+    """Parse a finite decimal, rejecting booleans and invalid values with ValueError."""
     if isinstance(value, bool):
         raise ValueError("boolean is not numeric")
     try:
@@ -26,12 +27,14 @@ def number(value):
 
 
 def date(value):
+    """Parse an ISO date or datetime string without requiring a timezone."""
     if not isinstance(value, str):
         raise ValueError("date must be a string")
     return datetime.fromisoformat(value)
 
 
 def summarize(records, column):
+    """Summarize a column, treating missing keys as null and undefined ratios as None."""
     values = [r.get(column) for r in records]
     present = [v for v in values if v is not None]
     distinct = len({json.dumps(v, sort_keys=True) for v in present})
@@ -47,6 +50,7 @@ def summarize(records, column):
 
 
 def build_profile(event, records, suite):
+    """Build batch measurements and check-specific summaries without evaluating policy."""
     columns = sorted({key for r in records for key in r})
     summaries = {column: summarize(records, column) for column in columns}
     checks = {}

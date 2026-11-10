@@ -1,4 +1,7 @@
-"""Usage: python -m services.stream_processor [--kafka HOST:PORT] [--database-url DSN] [--group-id ID] [--max-messages N]"""
+"""Run the Kafka stream processor from the command line.
+
+Use python -m services.stream_processor --help for runtime options.
+"""
 
 import argparse
 from pathlib import Path

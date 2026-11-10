@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 def train_order_volume(connection, cutoff):
+    """Train and persist a model using mock observations received by cutoff.
+
+    Return TRAINED with model identity, or SKIPPED when continuous training
+    history is insufficient. Training and storage failures propagate.
+    """
     start = (cutoff.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
              - timedelta(hours=1)) - timedelta(days=21) - timedelta(hours=168)
     available = PostgresMetricRepository(connection).list_profiles_between(

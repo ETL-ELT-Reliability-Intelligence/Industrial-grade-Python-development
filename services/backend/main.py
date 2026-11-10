@@ -23,6 +23,11 @@ RepositoryFactory = Callable[[], AbstractContextManager[ReadRepository]]
 
 
 def create_app(*, repository_factory: RepositoryFactory | None = None) -> FastAPI:
+    """Build the dataset API and dashboard with an optional repository factory.
+
+    The default factory reads DATABASE_URL and opens storage per use; creating
+    the application does not seed data or run quality evaluation.
+    """
     app = FastAPI(
         title="ETL/ELT Reliability Intelligence — Application API",
         version="0.3.0",

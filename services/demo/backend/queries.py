@@ -12,10 +12,13 @@ from .repository import IncidentRepository
 
 
 class IncidentQueries:
+    """Build incident summaries and overview counts from a repository snapshot."""
+
     def __init__(self, repository: IncidentRepository) -> None:
         self.repository = repository
 
     def overview(self) -> Overview:
+        """Count active and resolved incidents and datasets affected by active incidents."""
         incidents = self.repository.list_incidents()
         active = [item for item in incidents if item.status != IncidentStatus.RESOLVED]
         return Overview(

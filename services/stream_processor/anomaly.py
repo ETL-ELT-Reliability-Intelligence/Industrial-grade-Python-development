@@ -1,4 +1,4 @@
-"""Детекция аномалий по правилам над профилями батчей (robust z-score)."""
+"""Detect batch-profile anomalies with robust z-scores and configured tolerances."""
 
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
@@ -13,7 +13,7 @@ DEFAULT_ANOMALY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config/anom
 
 
 class MetricRule(BaseModel):
-    """Пороги одной метрики; допуски стабилизируют разброс около нуля."""
+    """Metric thresholds with absolute and relative tolerance floors for dispersion."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -23,7 +23,7 @@ class MetricRule(BaseModel):
 
 
 class AnomalyConfig(BaseModel):
-    """Идентичность детектора и правила метрик из конфигурации."""
+    """Detector identity and per-metric anomaly rules."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -34,7 +34,7 @@ class AnomalyConfig(BaseModel):
 
 
 def load_anomaly_config(path: Path) -> AnomalyConfig:
-    """Читает defaults.yaml из каталога (или сам файл) и валидирует."""
+    """Validate anomaly rules from a YAML file or a directory containing defaults.yaml."""
     source = path / "defaults.yaml" if path.is_dir() else path
     data = yaml.safe_load(source.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -57,7 +57,7 @@ def _mad(values: list[float], median: float) -> float:
 def _evaluate(
     actual: float, values: list[float], rule: MetricRule, min_observations: int
 ) -> tuple[float, float] | None:
-    """Возвращает (ожидание, score), если отклонение аномально, иначе None."""
+    """Return expected value and score for an anomaly, otherwise None."""
     if len(values) < min_observations:
         return None
     expected = _median(values)
@@ -94,7 +94,7 @@ def _build(
 
 
 def _column_values(history: list[BatchProfile], column: str, metric: str) -> list[float]:
-    """Собирает значения одной колонки, пропуская отсутствующие и пустые."""
+    """Collect available column measurements, preserving measured zeros."""
     values = []
     for profile in history:
         summary = profile.columns.get(column)
@@ -107,9 +107,10 @@ def _column_values(history: list[BatchProfile], column: str, metric: str) -> lis
 def detect_anomalies(
     current: BatchProfile, history: list[BatchProfile], config: AnomalyConfig
 ) -> list[Anomaly]:
-    """Сравнивает текущий профиль с сопоставимой историей, без обращений к БД.
+    """Compare a profile against caller-selected compatible history without I/O.
 
-    Score растёт с отклонением, но остаётся в [0, 1].
+    Scores increase with deviation and remain in [0, 1]; they are not
+    probabilities. Metrics with insufficient history produce no anomalies.
     """
     anomalies: list[Anomaly] = []
 

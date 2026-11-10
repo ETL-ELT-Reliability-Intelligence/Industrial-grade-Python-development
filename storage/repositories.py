@@ -39,13 +39,17 @@ class DatasetRepository(Protocol):
 
     def get_schema(
         self, dataset_id: str, schema_version: int
-    ) -> tuple[SchemaField, ...] | None: ...
+    ) -> tuple[SchemaField, ...] | None:
+        """Return the stored schema version, or None if absent."""
+        ...
 
     def upsert_batch(self, batch: Batch) -> None:
         """Insert or update a batch; a missing object_key keeps the stored one."""
         ...
 
-    def get_batch(self, dataset_id: str, batch_id: str) -> Batch | None: ...
+    def get_batch(self, dataset_id: str, batch_id: str) -> Batch | None:
+        """Return the batch identified within a dataset, or None if absent."""
+        ...
 
     def list_batches(self, dataset_id: str, limit: int = 100) -> list[Batch]:
         """Return batches, newest received first."""
@@ -59,7 +63,9 @@ class PipelineRunRepository(Protocol):
         """Store a run; a finished run is never overwritten by a late event."""
         ...
 
-    def get_pipeline_run(self, pipeline_id: str, run_id: str) -> PipelineRun | None: ...
+    def get_pipeline_run(self, pipeline_id: str, run_id: str) -> PipelineRun | None:
+        """Return the identified pipeline run, or None if absent."""
+        ...
 
     def list_pipeline_runs(
         self, pipeline_id: str, limit: int = 100
@@ -71,11 +77,17 @@ class PipelineRunRepository(Protocol):
 class MetricRepository(FeatureRepository, Protocol):
     """Dataset statistics, the input of baselines and anomaly detection."""
 
-    def save_profile(self, profile: BatchProfile) -> None: ...
+    def save_profile(self, profile: BatchProfile) -> None:
+        """Store a batch profile, replacing the snapshot for the same dataset and scope."""
+        ...
 
-    def get_profile(self, dataset_id: str, scope_id: str) -> BatchProfile | None: ...
+    def get_profile(self, dataset_id: str, scope_id: str) -> BatchProfile | None:
+        """Return the dataset profile for a scope, or None if absent."""
+        ...
 
-    def list_profiles(self, dataset_id: str) -> list[BatchProfile]: ...
+    def list_profiles(self, dataset_id: str) -> list[BatchProfile]:
+        """Return all stored dataset profiles without guaranteeing their order."""
+        ...
 
     def list_profiles_between(
         self,
@@ -112,7 +124,9 @@ class MetricRepository(FeatureRepository, Protocol):
 
     def set_profile_eligible(
         self, dataset_id: str, scope_id: str, eligible: bool
-    ) -> None: ...
+    ) -> None:
+        """Update whether a stored profile may contribute to quality history."""
+        ...
 
     def save_metric(self, point: MetricPoint) -> None:
         """Insert or update the point with the same dataset, scope, metric, column and version."""
@@ -134,15 +148,33 @@ class QualityRepository(Protocol):
 
     def evaluation_lock(
         self, dataset_id: str, scope_id: str
-    ) -> AbstractContextManager: ...
+    ) -> AbstractContextManager:
+        """Hold an exclusive lock for evaluation work on one dataset and scope."""
+        ...
 
-    def get_evaluation(self, evaluation_id: str) -> Evaluation | None: ...
+    def get_evaluation(self, evaluation_id: str) -> Evaluation | None:
+        """Return an evaluation with its latest saved executions, or None if absent."""
+        ...
 
-    def save_evaluation(self, evaluation: Evaluation) -> None: ...
+    def save_evaluation(self, evaluation: Evaluation) -> None:
+        """Persist an evaluation while preserving its immutable plan.
 
-    def save_execution(self, evaluation_id: str, execution: CheckExecution) -> None: ...
+        A completed evaluation may only change delivery state. Creating a new
+        evaluation clears the scope's previously projected quality results.
+        Raise ValueError for invalid snapshots or conflicting updates.
+        """
+        ...
 
-    def list_evaluations(self, dataset_id: str, scope_id: str) -> list[Evaluation]: ...
+    def save_execution(self, evaluation_id: str, execution: CheckExecution) -> None:
+        """Update execution progress without changing frozen evidence or finished results.
+
+        Raise ValueError for unknown or completed evaluations and conflicting updates.
+        """
+        ...
+
+    def list_evaluations(self, dataset_id: str, scope_id: str) -> list[Evaluation]:
+        """Return evaluations for a scope in reverse creation sequence."""
+        ...
 
     def project_evaluation(self, evaluation: Evaluation) -> None:
         """Atomically update legacy read tables from the newest evaluation only."""
@@ -171,7 +203,9 @@ class QualityRepository(Protocol):
 
     def get_quality_decision(
         self, dataset_id: str, scope_id: str
-    ) -> QualityDecision | None: ...
+    ) -> QualityDecision | None:
+        """Return the projected decision for a scope, or None if absent."""
+        ...
 
 
 class AnomalyRepository(Protocol):
@@ -181,7 +215,9 @@ class AnomalyRepository(Protocol):
         """Store an anomaly; an already stored anomaly_id is left unchanged."""
         ...
 
-    def get_anomaly(self, anomaly_id: str) -> Anomaly | None: ...
+    def get_anomaly(self, anomaly_id: str) -> Anomaly | None:
+        """Return the anomaly identified by anomaly_id, or None if absent."""
+        ...
 
     def list_anomalies(
         self, dataset_id: str | None = None, limit: int = 100

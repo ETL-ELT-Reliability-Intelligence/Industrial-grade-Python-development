@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class OrderVolumeMonitor:
+    """Persist hourly predictions and publish deviations without changing quality."""
+
     def __init__(self, repository, profiles, anomalies, publisher):
         self.repository = repository
         self.profiles = profiles
@@ -19,6 +21,12 @@ class OrderVolumeMonitor:
         self.predictor = Predictor()
 
     def process(self, evaluation):
+        """Reuse or compute a prediction for a mock-source order evaluation.
+
+        Return None for other sources. Persist SKIPPED for missing inputs and
+        ERROR for prediction failures. WARN results save and publish an anomaly;
+        replaying an evaluation may republish that same anomaly.
+        """
         event = evaluation.event
         if event.dataset_id != "mock_orders" or event.source_id != "mock":
             return

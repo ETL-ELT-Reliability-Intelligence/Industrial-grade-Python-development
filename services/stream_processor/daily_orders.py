@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 def previous_day(cutoff: datetime) -> tuple[datetime, datetime]:
+    """Return the previous UTC day as a half-open interval.
+
+    Raise ValueError when cutoff lacks a timezone.
+    """
     if cutoff.utcoffset() is None:
         raise ValueError("cutoff must include timezone")
     end = cutoff.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -17,7 +21,12 @@ def previous_day(cutoff: datetime) -> tuple[datetime, datetime]:
 
 
 def check_daily_orders(batches, cutoff: datetime, *, reader=read_raw) -> dict:
-    """Return presence, not completeness; unreadable raw is a technical failure."""
+    """Check for an order created during the previous UTC day.
+
+    Inspect batches received between that day's start and cutoff, inclusive.
+    Ignore malformed order timestamps. Return PASS on presence and WARN on
+    absence; unreadable raw data propagates as a technical failure.
+    """
     start, end = previous_day(cutoff)
     found = False
     for batch in batches:
@@ -49,6 +58,7 @@ def check_daily_orders(batches, cutoff: datetime, *, reader=read_raw) -> dict:
 
 
 def run_daily_orders(connection, cutoff: datetime) -> dict:
+    """Read recent mock-order batches and check the previous UTC day's presence."""
     start, _ = previous_day(cutoff)
     batches = connection.execute(
         "SELECT received_at, object_key FROM batches "

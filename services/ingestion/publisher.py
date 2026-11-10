@@ -6,10 +6,16 @@ from contracts.events import Event
 
 
 class EventPublisher(Protocol):
-    def publish(self, event: Event) -> None: ...
+    """Boundary for publishing ingestion events to a configured destination."""
+
+    def publish(self, event: Event) -> None:
+        """Publish one event or raise when the destination reports a delivery failure."""
+        ...
 
 
 class InMemoryPublisher:
+    """Collect events in publication order for local execution and tests."""
+
     def __init__(self) -> None:
         self.events: list[Event] = []
 
@@ -18,6 +24,8 @@ class InMemoryPublisher:
 
 
 class KafkaPublisher:
+    """Publish keyed Kafka events and wait up to ten seconds for delivery."""
+
     def __init__(self, bootstrap_servers: str):
         from confluent_kafka import Producer
 
