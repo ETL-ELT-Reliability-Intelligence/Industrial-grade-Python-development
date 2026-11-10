@@ -41,6 +41,7 @@ jobs:
           --ignore=tests/storage/test_repositories.py
           --ignore=tests/storage/test_evaluations.py
           --ignore=tests/storage/test_feature_profiles.py
+          --ignore=tests/storage/test_order_volume_history.py
           --ignore=tests/application/test_postgres.py
           --ignore=tests/stream_processor/test_postgres.py
           --ignore=tests/application/test_dashboard.py
@@ -88,6 +89,7 @@ jobs:
           tests/storage/test_repositories.py
           tests/storage/test_evaluations.py
           tests/storage/test_feature_profiles.py
+          tests/storage/test_order_volume_history.py
           tests/application/test_postgres.py
           tests/stream_processor/test_postgres.py
           tests/integration/test_load_postgres.py
