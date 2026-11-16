@@ -586,8 +586,19 @@ def test_evaluation_diagnostics_mobile_and_untrusted_text(browser_context, theme
     with browser_page(browser_context, repository.factory, theme) as page:
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto("http://application.test/?dataset=orders&scope=window-1")
-        expect(page.locator("#quality .status-error")).to_contain_text("ERROR")
-        expect(page.locator("#quality .status-skipped")).to_contain_text("SKIPPED")
+        checks = page.locator("#quality > .table-wrap")
+
+        failed_row = checks.get_by_role("row").filter(
+            has=page.get_by_text("orders.volume", exact=True)
+        )
+        skipped_row = checks.get_by_role("row").filter(
+            has=page.get_by_text("orders.nulls", exact=True)
+        )
+
+        expect(failed_row).to_have_count(1)
+        expect(skipped_row).to_have_count(1)
+        expect(failed_row.locator(".status-error")).to_contain_text("ERROR")
+        expect(skipped_row.locator(".status-skipped")).to_contain_text("SKIPPED")
         expect(page.locator("#quality")).to_contain_text("Результата нет")
         expect(page.locator("#quality")).to_contain_text("Недостаточно истории")
         expect(page.locator("#quality")).to_contain_text(injection)
