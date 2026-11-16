@@ -602,6 +602,18 @@ class PostgresQualityRepository(_PostgresRepository):
 class PostgresAnomalyRepository(_PostgresRepository):
     """Detected anomalies."""
 
+    def get_detection(self, evaluation_id):
+        row = self._connection.execute(
+            "SELECT result FROM rule_detection_results WHERE evaluation_id = %s", (evaluation_id,),
+        ).fetchone()
+        return row["result"] if row else None
+
+    def save_detection(self, evaluation_id, result):
+        self._connection.execute(
+            "INSERT INTO rule_detection_results(evaluation_id, result) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+            (evaluation_id, Jsonb(result)),
+        )
+
     def save_anomaly(self, anomaly: Anomaly) -> None:
         with self._connection.transaction():
             self._ensure_dataset(anomaly.dataset_id)

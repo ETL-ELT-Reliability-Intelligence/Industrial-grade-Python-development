@@ -1,4 +1,6 @@
 /** Selection and request lifecycle; rendering and transport are injected. */
+import { detectionView } from "./detections.js";
+import { node, button } from "./ui.js";
 export class EvaluationController {
   constructor(api, view, onSelect) {
     this.api = api;
@@ -61,6 +63,18 @@ export class EvaluationController {
           throw new Error("Расчёт не относится к выбранной области проверки.");
         }
         this.view.detail(record);
+        try {
+          const detections = await this.api.get(`${path}/evaluations/${encodeURIComponent(selected)}/detections`, request.signal);
+          if (request !== this.pending) return;
+          this.view.detailRoot.append(detectionView(detections));
+        } catch (error) {
+          if (request.signal.aborted || request !== this.pending) return;
+          const warning = node("div", undefined, "message error");
+          warning.setAttribute("role", "alert");
+          warning.append(node("p", "Не удалось загрузить результаты детекторов. Это не означает отсутствие аномалий."),
+            button("Повторить загрузку детекторов", () => this.reload()));
+          this.view.detailRoot.append(warning);
+        }
       } else {
         // Only a successful empty history permits the legacy evidence view.
         const quality = await this.api.get(`${path}/quality?${new URLSearchParams({ scope_id: scope })}`, request.signal);

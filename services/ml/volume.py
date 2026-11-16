@@ -111,20 +111,43 @@ def training_rows(profiles, cutoff):
     Return an empty list if any target or required history is unavailable.
     The latest revision wins even when invalid; missing hours never become zero.
     """
+    rows, diagnostics = prepare_training(profiles, cutoff)
+    return rows
+
+
+def prepare_training(profiles, cutoff):
+    """Explain every rejected target without relaxing history completeness rules."""
     end = cutoff.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0) - HOUR
     start = end - timedelta(days=21)
     profiles = list(profiles)
     latest = latest_profiles(profiles, cutoff)
     rows = []
+    missing_targets = []
+    missing_lags = []
+    missing_history = set()
     for index in range(21 * 24):
         hour = start + index * HOUR
         profile = latest.get(hour)
         count = observed_count(profile)
         inputs = lag_features(hour, profiles)
-        if count is None or inputs is None:
-            return []
-        rows.append((hour, count, profile.event.batch_id, inputs))
-    return rows
+        if count is None:
+            missing_targets.append({"hour": hour.isoformat(), "reason": (
+                (profile.order_volume or {}).get("reason", "invalid_observation") if profile else "missing_hour"
+            )})
+        if inputs is None:
+            available = latest_profiles(profiles, hour)
+            missing = [lag for lag in range(1, 169) if observed_count(available.get(hour - lag * HOUR)) is None]
+            missing_history.update(hour - lag * HOUR for lag in missing)
+            missing_lags.append({"hour": hour.isoformat(), "available_hours": 168 - len(missing),
+                                 "missing_periods": [(hour - lag * HOUR).isoformat() for lag in (24, 168) if lag in missing]})
+        if count is not None and inputs is not None:
+            rows.append((hour, count, profile.event.batch_id, inputs))
+    diagnostics = {"required_targets": 504, "usable_targets": len(rows),
+                   "observations_received": len(latest), "target_start": start.isoformat(),
+                   "target_end_exclusive": end.isoformat(), "missing_targets": missing_targets,
+                   "missing_lag_targets": missing_lags,
+                   "missing_history_periods": [hour.isoformat() for hour in sorted(missing_history)]}
+    return (rows if len(rows) == 504 else []), diagnostics
 
 
 def deviation(actual, expected):

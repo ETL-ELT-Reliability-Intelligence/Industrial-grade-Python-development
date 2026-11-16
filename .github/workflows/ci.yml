@@ -43,16 +43,19 @@ jobs:
           --ignore=tests/storage/test_feature_profiles.py
           --ignore=tests/storage/test_order_volume_history.py
           --ignore=tests/application/test_postgres.py
+          --ignore=tests/application/test_detection_storage.py
           --ignore=tests/stream_processor/test_postgres.py
           --ignore=tests/application/test_dashboard.py
           --ignore=tests/application/demo/test_demo_dashboard.py
           --ignore=tests/integration
           --junitxml=test-results/unit.xml
+      - name: Ingestion to quality and redelivery (no services)
+        run: uv run --no-sync pytest tests/integration/test_ingestion_to_quality.py --junitxml=test-results/ingestion-quality.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: junit-unit-${{ matrix.python }}
-          path: test-results/unit.xml
+          path: test-results/*.xml
 
   postgres:
     name: PostgreSQL integration
@@ -91,6 +94,7 @@ jobs:
           tests/storage/test_feature_profiles.py
           tests/storage/test_order_volume_history.py
           tests/application/test_postgres.py
+          tests/application/test_detection_storage.py
           tests/stream_processor/test_postgres.py
           tests/integration/test_load_postgres.py
           tests/integration/test_stream_processor.py
@@ -125,7 +129,10 @@ jobs:
           docker compose logs kafka
           exit 1
       - name: Run ingestion -> Kafka -> consumer test
-        run: uv run --no-sync pytest tests/integration/test_kafka_flow.py --junitxml=test-results/kafka.xml
+        # Auto creation is disabled; initialize the topic used by this isolated test.
+        run: |
+          docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic dataset.ingested --partitions 1 --replication-factor 1
+          uv run --no-sync pytest tests/integration/test_kafka_flow.py --junitxml=test-results/kafka.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -203,3 +210,39 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --extra dev
       - run: uv run --no-sync ruff check .
+
+  acceptance:
+    name: Full Airflow to API acceptance and recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python scripts/demo.py --mode synthetic --recovery --cleanup
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acceptance-diagnostics
+          path: test-results/
+          retention-days: 7
+
+  ml-benchmark:
+    name: Reproducible detector benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OMP_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.3"
+          python-version: "3.11"
+      - run: uv sync --locked --extra ml
+      - run: uv run --no-sync python -m services.ml.benchmark --seed 42 --output test-results/ml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ml-benchmark
+          path: test-results/ml/

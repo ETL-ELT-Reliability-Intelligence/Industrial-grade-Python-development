@@ -134,6 +134,9 @@ function loadDataset() {
       banner.append(node("strong", "Тестовые данные"), node("span", "Добавлены вручную для просмотра приложения."));
       root.append(banner);
     }
+    if (data.dataset_id === "mock_orders") {
+      root.append(node("p", "Синтетический источник mock: почасовые данные для проверки качества и ML-прогнозов.", "demo-banner"));
+    }
   }, loadDataset);
 }
 

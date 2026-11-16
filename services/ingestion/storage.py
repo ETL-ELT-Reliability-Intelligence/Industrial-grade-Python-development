@@ -3,10 +3,69 @@
 import hashlib
 import json
 import os
+import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Protocol
 
 from .sources import Record
+
+
+def _atomic_create(path: Path, body: bytes) -> bool:
+    """Publish a complete file exactly once; readers never see partial writes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".pending-")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+            return True
+        except FileExistsError:
+            return False
+    finally:
+        os.unlink(temporary)
+
+
+@contextmanager
+def _schema_lock(path: Path):
+    """Serialize local schema updates across processes; OS releases crash locks."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as stream:
+        stream.write(b"0")
+        stream.flush()
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                stream.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("schema lock timeout")
+                time.sleep(0.01)
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream, fcntl.LOCK_UN)
+
+
+def _conflict(error):
+    return getattr(error, "response", {}).get("Error", {}).get("Code") in {
+        "PreconditionFailed", "ConditionalRequestConflict", "412", "409",
+    }
 
 
 def _run_name(run_id: str) -> str:
@@ -34,7 +93,7 @@ class RawStore(Protocol):
         """Events (as JSON) committed for this run, or None if the run was never committed."""
 
     def save_run(self, dataset_id: str, run_id: str, events: list[str]) -> None:
-        """Commit the events of a run. Written before publishing, so a retry can republish them."""
+        """Create an immutable run manifest; a losing writer must load the winner."""
 
 
 class LocalRawStore:
@@ -52,9 +111,9 @@ class LocalRawStore:
     def save_raw(self, dataset_id: str, batch_id: str, records: list[Record]) -> str:
         path = self._root / dataset_id / f"{batch_id}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("x", encoding="utf-8") as f:  # never overwrite a batch another run just wrote
-            for record in records:
-                f.write(json.dumps(record, default=str) + "\n")
+        body = "".join(json.dumps(record, default=str) + "\n" for record in records).encode()
+        if not _atomic_create(path, body):
+            raise FileExistsError(path)
         return path.resolve().as_uri()
 
     def load_raw(self, dataset_id: str, batch_id: str) -> list[Record]:
@@ -62,6 +121,10 @@ class LocalRawStore:
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
     def schema_version(self, dataset_id: str, fingerprint: str) -> tuple[int, int | None]:
+        with _schema_lock(self._root / dataset_id / ".schema.lock"):
+            return self._schema_version(dataset_id, fingerprint)
+
+    def _schema_version(self, dataset_id, fingerprint):
         path = self._root / dataset_id / "schema.json"
         known: list[str] = json.loads(path.read_text())["fingerprints"] if path.exists() else []
         if fingerprint in known:
@@ -69,7 +132,16 @@ class LocalRawStore:
         previous = len(known) or None
         known.append(fingerprint)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"fingerprints": known}))
+        fd, temporary = tempfile.mkstemp(dir=path.parent)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                json.dump({"fingerprints": known}, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
         return len(known), previous
 
     def _run_path(self, dataset_id: str, run_id: str) -> Path:
@@ -80,19 +152,17 @@ class LocalRawStore:
         return json.loads(path.read_text()) if path.exists() else None
 
     def save_run(self, dataset_id: str, run_id: str, events: list[str]) -> None:
-        """Atomically replace a run record using a temporary file in the same directory."""
+        """Atomically commit the first complete manifest, preserving the winner."""
         path = self._run_path(dataset_id, run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(events))
-        tmp.replace(path)  # atomic: a run is either fully committed or absent
+        _atomic_create(path, json.dumps(events).encode())
 
 
 class S3RawStore:
     """Store raw batches and metadata through an S3-compatible object API.
 
-    Uses the local store layout, but raw writes do not enforce exclusive
-    creation and batch number allocation is not atomic.
+    Requires conditional PutObject support. Raw files and run manifests are
+    immutable; schema history uses optimistic concurrency with ETags.
     """
 
     def __init__(self, client: Any, bucket: str):
@@ -108,8 +178,14 @@ class S3RawStore:
         )
         try:
             client.head_bucket(Bucket=bucket)
-        except client.exceptions.ClientError:
-            client.create_bucket(Bucket=bucket)
+        except client.exceptions.ClientError as error:
+            if error.response["Error"]["Code"] not in {"404", "NoSuchBucket"}:
+                raise
+            try:
+                client.create_bucket(Bucket=bucket)
+            except client.exceptions.ClientError as error:
+                if error.response["Error"]["Code"] != "BucketAlreadyOwnedByYou":
+                    raise
         return cls(client, bucket)
 
     def next_batch_number(self, dataset_id: str, day: str) -> int:
@@ -122,7 +198,12 @@ class S3RawStore:
     def save_raw(self, dataset_id: str, batch_id: str, records: list[Record]) -> str:
         key = f"{dataset_id}/{batch_id}.jsonl"
         body = "".join(json.dumps(record, default=str) + "\n" for record in records)
-        self._client.put_object(Bucket=self._bucket, Key=key, Body=body.encode("utf-8"))
+        try:
+            self._client.put_object(Bucket=self._bucket, Key=key, Body=body.encode("utf-8"), IfNoneMatch="*")
+        except Exception as error:
+            if _conflict(error):
+                raise FileExistsError(key) from error
+            raise
         return f"s3://{self._bucket}/{key}"
 
     def load_raw(self, dataset_id: str, batch_id: str) -> list[Record]:
@@ -130,20 +211,30 @@ class S3RawStore:
         return [json.loads(line) for line in body.decode("utf-8").splitlines() if line]
 
     def schema_version(self, dataset_id: str, fingerprint: str) -> tuple[int, int | None]:
+        for _ in range(128):
+            try:
+                return self._schema_version(dataset_id, fingerprint)
+            except Exception as error:
+                if not _conflict(error):
+                    raise
+        raise TimeoutError("schema update contention exceeded retry budget")
+
+    def _schema_version(self, dataset_id, fingerprint):
         key = f"{dataset_id}/schema.json"
         try:
-            known: list[str] = json.loads(self._client.get_object(Bucket=self._bucket, Key=key)["Body"].read())[
-                "fingerprints"
-            ]
+            stored = self._client.get_object(Bucket=self._bucket, Key=key)
+            known = json.loads(stored["Body"].read())["fingerprints"]
+            condition = {"IfMatch": stored["ETag"]}
         except Exception as exc:
             if getattr(exc, "response", {}).get("Error", {}).get("Code") != "NoSuchKey":
                 raise
             known = []
+            condition = {"IfNoneMatch": "*"}
         if fingerprint in known:
             return known.index(fingerprint) + 1, None
         previous = len(known) or None
         known.append(fingerprint)
-        self._client.put_object(Bucket=self._bucket, Key=key, Body=json.dumps({"fingerprints": known}).encode())
+        self._client.put_object(Bucket=self._bucket, Key=key, Body=json.dumps({"fingerprints": known}).encode(), **condition)
         return len(known), previous
 
     def load_run(self, dataset_id: str, run_id: str) -> list[str] | None:
@@ -156,9 +247,19 @@ class S3RawStore:
         return json.loads(body.read())
 
     def save_run(self, dataset_id: str, run_id: str, events: list[str]) -> None:
-        self._client.put_object(
-            Bucket=self._bucket, Key=self._run_key(dataset_id, run_id), Body=json.dumps(events).encode()
-        )
+        for _ in range(128):
+            try:
+                self._client.put_object(
+                    Bucket=self._bucket, Key=self._run_key(dataset_id, run_id),
+                    Body=json.dumps(events).encode(), IfNoneMatch="*",
+                )
+                return
+            except Exception as error:
+                if not _conflict(error):
+                    raise
+                if self.load_run(dataset_id, run_id) is not None:
+                    return
+        raise TimeoutError("run commit contention exceeded retry budget")
 
     @staticmethod
     def _run_key(dataset_id: str, run_id: str) -> str:

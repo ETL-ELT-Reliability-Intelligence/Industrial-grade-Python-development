@@ -11,12 +11,35 @@ from fastapi.testclient import TestClient
 from contracts.quality import DecisionReason, QualityDecision, QualityStatus
 from services.backend.main import create_app
 from services.backend.models import Dataset
+from services.backend.models import DetectionEvidence
 from services.backend.postgres import open_repository
 from tests.application.support import NOW, MemoryRepository
 from tests.application.evaluation_support import evaluation_record
 
 playwright_api = pytest.importorskip("playwright.sync_api")
 expect = playwright_api.expect
+
+
+def test_detector_evidence_and_missing_results(browser_context, theme):
+    repository = MemoryRepository()
+    repository.evaluations = [evaluation_record("detector", completed=True)]
+    repository.detections["detector"] = DetectionEvidence(
+        dataset_id="orders", batch_id="window-1", evaluation_id="detector",
+        rule={"status": "SKIPPED", "reason": "insufficient_history", "detector": "rules"},
+        ml={"status": "WARN", "detector": "lag_gradient_boosting", "actual": 0,
+            "expected": 100, "lower": 80, "upper": 120, "model_version": "model-visible"},
+    )
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto("http://application.test/?dataset=orders&scope=window-1&evaluation=detector")
+        expect(page.get_by_text("Версия: model-visible", exact=True)).to_be_visible()
+        expect(page.get_by_text("Недостаточно сопоставимой истории.", exact=True)).to_be_visible()
+        expect(page.get_by_text("80.00 … 120.00", exact=True)).to_be_visible()
+        assert page.locator(".detector-evidence").get_by_role("cell", name="0", exact=True).count() == 1
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        repository.detections.clear()
+        page.locator("#refresh").click()
+        expect(page.get_by_text("Результат детектора ещё не сохранён.", exact=True)).to_be_visible()
 
 
 @pytest.fixture(scope="module")
@@ -563,8 +586,19 @@ def test_evaluation_diagnostics_mobile_and_untrusted_text(browser_context, theme
     with browser_page(browser_context, repository.factory, theme) as page:
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto("http://application.test/?dataset=orders&scope=window-1")
-        expect(page.locator("#quality .status-error")).to_contain_text("ERROR")
-        expect(page.locator("#quality .status-skipped")).to_contain_text("SKIPPED")
+        checks = page.locator("#quality > .table-wrap")
+
+        failed_row = checks.get_by_role("row").filter(
+            has=page.get_by_text("orders.volume", exact=True)
+        )
+        skipped_row = checks.get_by_role("row").filter(
+            has=page.get_by_text("orders.nulls", exact=True)
+        )
+
+        expect(failed_row).to_have_count(1)
+        expect(skipped_row).to_have_count(1)
+        expect(failed_row.locator(".status-error")).to_contain_text("ERROR")
+        expect(skipped_row.locator(".status-skipped")).to_contain_text("SKIPPED")
         expect(page.locator("#quality")).to_contain_text("Результата нет")
         expect(page.locator("#quality")).to_contain_text("Недостаточно истории")
         expect(page.locator("#quality")).to_contain_text(injection)

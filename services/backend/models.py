@@ -1,11 +1,12 @@
 """HTTP read models; shared contracts retain their upstream meaning."""
 
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, Literal
 
 from pydantic import AwareDatetime, BaseModel
 
 from contracts.evaluation import Evaluation, ExecutionStatus
 from contracts.quality import CheckResult, QualityDecision, QualityStatus
+from contracts.state import Anomaly
 
 T = TypeVar("T")
 
@@ -77,3 +78,27 @@ class EvaluationDetail(EvaluationRecord):
     """Full persisted evaluation and its storage metadata."""
 
     evaluation: Evaluation
+
+
+class DetectorResult(BaseModel):
+    """Saved evidence; SKIPPED never implies a normal measurement."""
+
+    status: Literal["PASS", "WARN", "SKIPPED", "ERROR"]
+    detector: str
+    reason: str | None = None
+    actual: float | None = None
+    expected: float | None = None
+    lower: float | None = None
+    upper: float | None = None
+    model_version: str | None = None
+    checks: list[dict] = []
+    anomalies: list[Anomaly] = []
+
+
+class DetectionEvidence(BaseModel):
+    dataset_id: str
+    batch_id: str
+    evaluation_id: str
+    rule: DetectorResult
+    ml: DetectorResult
+    training: dict | None = None

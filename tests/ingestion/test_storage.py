@@ -1,6 +1,8 @@
 """Both RawStore implementations must satisfy the same behaviour."""
 
 import io
+import hashlib
+import threading
 
 import pytest
 
@@ -16,21 +18,33 @@ class FakeS3Client:
 
     def __init__(self):
         self.objects: dict[str, bytes] = {}
+        self.lock = threading.RLock()
 
-    def put_object(self, Bucket, Key, Body):
-        self.objects[Key] = Body
+    def put_object(self, Bucket, Key, Body, IfNoneMatch=None, IfMatch=None):
+        with self.lock:
+            existing = self.objects.get(Key)
+            if (IfNoneMatch and existing is not None) or (IfMatch and (
+                existing is None or hashlib.sha256(existing).hexdigest() != IfMatch
+            )):
+                error = RuntimeError("conditional write conflict")
+                error.response = {"Error": {"Code": "PreconditionFailed"}}
+                raise error
+            self.objects[Key] = Body
 
     def get_object(self, Bucket, Key):
         if Key not in self.objects:
             raise NoSuchKey()
-        return {"Body": io.BytesIO(self.objects[Key])}
+        with self.lock:
+            body = self.objects[Key]
+            return {"Body": io.BytesIO(body), "ETag": hashlib.sha256(body).hexdigest()}
 
     def get_paginator(self, _name):
         client = self
 
         class Paginator:
             def paginate(self, Bucket, Prefix):
-                yield {"Contents": [{"Key": k} for k in client.objects if k.startswith(Prefix)]}
+                with client.lock:
+                    yield {"Contents": [{"Key": k} for k in client.objects if k.startswith(Prefix)]}
 
         return Paginator()
 

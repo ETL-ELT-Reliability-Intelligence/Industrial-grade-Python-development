@@ -15,6 +15,7 @@ from .models import (
     Pipeline,
     QualityScope,
     ScopeQuality,
+    DetectionEvidence,
 )
 from .queries import DatasetQueries, EvaluationQueries, PipelineQueries
 from .repository import ReadRepository
@@ -104,6 +105,12 @@ def evaluation(
     dataset_id: str, evaluation_id: str, queries: Evaluations
 ) -> EvaluationDetail:
     return queries.detail(dataset_id, evaluation_id)
+
+
+@router.get("/datasets/{dataset_id}/evaluations/{evaluation_id}/detections", response_model=DetectionEvidence)
+def detections(dataset_id: str, evaluation_id: str, queries: Evaluations, repository: Repository):
+    record = queries.detail(dataset_id, evaluation_id)
+    return repository.get_detections(record)
 
 
 def get_pipeline_queries(repository: Repository) -> PipelineQueries:

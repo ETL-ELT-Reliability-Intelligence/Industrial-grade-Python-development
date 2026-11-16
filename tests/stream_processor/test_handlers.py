@@ -215,6 +215,13 @@ class FakeMetrics:
 class FakeAnomalies:
     def __init__(self) -> None:
         self.items: dict[str, Anomaly] = {}
+        self.detections = {}
+
+    def get_detection(self, evaluation_id):
+        return self.detections.get(evaluation_id)
+
+    def save_detection(self, evaluation_id, result):
+        self.detections.setdefault(evaluation_id, result)
 
     def save_anomaly(self, anomaly: Anomaly) -> None:
         self.items.setdefault(anomaly.anomaly_id, anomaly)
