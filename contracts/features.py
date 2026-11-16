@@ -10,6 +10,8 @@ from contracts.base import Contract, Count, NonBlankText
 
 
 class FeatureColumn(Contract):
+    """Column calculation kind and optional ordered categorical vocabulary."""
+
     name: NonBlankText
     kind: Literal["generic", "numeric", "categorical"] = "generic"
     categories: tuple[str, ...] = ()
@@ -24,6 +26,8 @@ class FeatureColumn(Contract):
 
 
 class FeatureDefinition(Contract):
+    """Validated feature settings whose fingerprint identifies calculation inputs."""
+
     columns: tuple[FeatureColumn, ...] = ()
     quantiles: tuple[float, ...] = (0.25, 0.5, 0.75)
     quantile_method: Literal["linear"] = "linear"
@@ -51,6 +55,7 @@ class FeatureDefinition(Contract):
 
     @property
     def fingerprint(self) -> str:
+        """Hash canonical settings independently of JSON object key order."""
         payload = json.dumps(
             self.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
         )
@@ -58,6 +63,8 @@ class FeatureDefinition(Contract):
 
 
 class ColumnFeatures(Contract):
+    """Column measurements; unavailable ratios and numeric summaries remain None."""
+
     name: NonBlankText
     missing_column: bool
     null_count: Count
@@ -79,6 +86,8 @@ class ColumnFeatures(Contract):
 
 
 class FeatureProfile(Contract):
+    """Feature snapshot identified by batch, raw bytes, settings and implementation."""
+
     profile_id: NonBlankText
     dataset_id: NonBlankText
     batch_id: NonBlankText
@@ -109,6 +118,8 @@ class FeatureProfile(Contract):
 
 
 class ProfilingAttempt(Contract):
+    """Independent feature calculation attempt linked to a quality evaluation."""
+
     attempt_id: NonBlankText
     evaluation_id: NonBlankText
     definition_hash: NonBlankText

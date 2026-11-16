@@ -2,6 +2,13 @@
 
 
 def select_history(current, candidates):
+    """Return distinct compatible earlier periods, newest first.
+
+    Exclude observations received after the current batch and periods crossing
+    its cutoff. The latest delivery of a period supersedes older deliveries
+    even when ineligible. Match source, granularity, schema, statistics and
+    configuration versions. The caller applies the history window limit.
+    """
     event = current.event
     cutoff = event.period_start or event.received_at
     # Latest delivery of a period supersedes earlier deliveries, even if rejected.

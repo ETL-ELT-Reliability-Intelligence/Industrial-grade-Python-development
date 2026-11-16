@@ -58,7 +58,11 @@ def orders_ingestion():
         context = get_current_context()
         run_id = context["run_id"]  # stable across retries
         return service.ingest(
-            MockApiSource(volume_factor=factor),
+            MockApiSource(
+                volume_factor=factor,
+                period_start=context["data_interval_start"],
+                period_end=context["data_interval_end"],
+            ),
             run_id=run_id,
             period_start=context["data_interval_start"],
             period_end=context["data_interval_end"],

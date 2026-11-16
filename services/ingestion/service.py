@@ -1,5 +1,8 @@
+"""Ingest source batches into raw storage and publish their lifecycle events."""
+
 from datetime import datetime, timezone
 from typing import Callable
+import logging
 
 from contracts.events import (
     DatasetIngestedEvent,
@@ -13,23 +16,14 @@ from .publisher import EventPublisher
 from .sources import Source
 from .storage import RawStore
 
+logger = logging.getLogger(__name__)
+
 
 class IngestionService:
-    """Fetch, validate, store raw data, publish events.
+    """Coordinate fetching, validation, raw storage and at-least-once publication.
 
-    Never judges whether a dataset is anomalous - that is Reliability Intelligence.
-
-    Delivery is at-least-once. With a `run_id`, ingestion is idempotent: the events of a run are
-    committed to the store before publishing, so retrying the same run (e.g. an Airflow task retry)
-    republishes the same events instead of creating a second batch. Consumers dedupe by `dedup_key`.
-
-    Known limits:
-    - A crash after `save_raw` but before `save_run` leaves an orphan raw object; the retry of that
-      run fetches again and gets the next batch number. Orphans are harmless: nothing was published.
-    - A crash while publishing may have delivered only some events of a run; the retry republishes
-      all of them with the same `dedup_key`s, so consumers must dedupe.
-    - Batch numbers are not reserved atomically. Two concurrent runs for one dataset/day may pick the
-      same number; the local store refuses to overwrite and the loser retries once with a fresh number.
+    Quality and anomaly decisions belong to downstream consumers. Run records
+    are committed before publication; consumers must deduplicate events.
     """
 
     def __init__(
@@ -51,12 +45,32 @@ class IngestionService:
         period_end=None,
         granularity: str | None = None,
     ) -> DatasetIngestedEvent:
+        """Store a source batch and publish ingestion and schema-change events.
+
+        A crash before the run record is saved can leave orphan raw data. A crash
+        during publication can deliver only part of the event list; retrying with
+        the same run_id republishes all saved events. Batch numbers are not
+        reserved atomically: a FileExistsError triggers one allocation retry.
+        Source, validation, storage and publication errors propagate.
+
+        Args:
+            source: Source to fetch when no committed run exists.
+            run_id: Optional retry identity within the dataset. A committed run
+                republishes saved events without fetching or saving another batch.
+            period_start: Optional period override that sets hourly granularity.
+            period_end: Optional end override; event validation checks boundaries.
+
+        Returns:
+            The ingested event, including when replaying a committed run.
+        """
         if run_id is not None:
             committed = self._store.load_run(source.dataset_id, run_id)
             if committed is not None:
                 events = [parse_event(payload) for payload in committed]
                 self._publish_all(events)
-                return next(e for e in events if isinstance(e, DatasetIngestedEvent))
+                ingested = next(e for e in events if isinstance(e, DatasetIngestedEvent))
+                self._log_batch(ingested)
+                return ingested
 
         batch = source.fetch()
         validate(batch)
@@ -106,7 +120,16 @@ class IngestionService:
                 batch.dataset_id, run_id, [e.model_dump_json() for e in events]
             )
         self._publish_all(events)
+        self._log_batch(ingested)
         return ingested
+
+    @staticmethod
+    def _log_batch(event: DatasetIngestedEvent) -> None:
+        logger.info(
+            "Ingested dataset=%s batch_id=%s period_start=%s period_end=%s records=%d",
+            event.dataset_id, event.batch_id, event.period_start, event.period_end,
+            event.records,
+        )
 
     def _publish_all(self, events: list[Event]) -> None:
         for event in events:

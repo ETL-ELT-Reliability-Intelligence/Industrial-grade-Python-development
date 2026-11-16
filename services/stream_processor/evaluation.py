@@ -13,12 +13,14 @@ from data_quality.execution import execute_check, finalize
 
 @dataclass(frozen=True)
 class PreparedChecks:
+    """Prepared executions and the optional checksum of the raw bytes used."""
+
     checks: tuple[CheckExecution, ...]
     raw_sha256: str | None
 
 
 def transient(error: Exception) -> bool:
-    """Retry temporary transport failures, never malformed input/configuration."""
+    """Classify retryable transport and database failures, including chained causes."""
     if isinstance(error, (TimeoutError, ConnectionError)):
         return True
     if isinstance(error, OSError) and error.errno in (
@@ -52,6 +54,8 @@ def transient(error: Exception) -> bool:
 
 
 class EvaluationRunner:
+    """Persist evaluation progress and resume work within bounded retry budgets."""
+
     def __init__(
         self, repository, clock=lambda: datetime.now(timezone.utc), sleep=time.sleep
     ):
@@ -60,7 +64,23 @@ class EvaluationRunner:
         self.sleep = sleep
 
     def run(self, event, suite, prepare, *, request_id: str | None = None):
-        """The same explicit request_id resumes; a new one requests a new evaluation."""
+        """Create or resume a batch evaluation under its repository lock.
+
+        Args:
+            event: Batch metadata; repeated identities must retain the same metadata.
+            suite: Configuration for a new evaluation; resumed work uses its saved plan.
+            prepare: Callback returning PreparedChecks from the persisted evaluation.
+            request_id: None selects the initial evaluation. Reusing an explicit ID
+                resumes that request; a new ID creates a separate evaluation.
+
+        Returns:
+            A completed evaluation with a saved quality decision. An existing
+            decision is returned without rerunning checks. Delivery is separate.
+
+        Raises:
+            ValueError: The request ID is empty or reserved, a new evaluation lacks
+                configuration, or repeated batch metadata conflicts.
+        """
         if request_id is not None and (
             not request_id.strip() or request_id == "initial"
         ):
@@ -114,7 +134,12 @@ class EvaluationRunner:
             return evaluation
 
     def deliver(self, evaluation, operation):
-        """Project and publish with a durable, bounded attempt budget."""
+        """Run projection and publication with a persisted, bounded attempt budget.
+
+        The operation must tolerate replay after partial delivery. Published
+        evaluations are returned unchanged. Temporary failures are retried;
+        permanent failures and exhausted budgets propagate or raise RuntimeError.
+        """
         if evaluation.published:
             return evaluation
         attempts = evaluation.delivery_attempts

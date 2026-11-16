@@ -629,3 +629,467 @@ def test_postgres_evaluation_execution_appears_after_refresh(browser_context, th
             connection.execute(
                 "DELETE FROM datasets WHERE dataset_id = %s", (dataset_id,)
             )
+
+
+def pipeline_repository():
+    from datetime import timedelta
+
+    from contracts.state import PipelineRun, PipelineRunStatus
+
+    repository = MemoryRepository()
+    repository.pipeline_runs = [
+        PipelineRun(
+            pipeline_id="orders/daily",
+            run_id="active-run",
+            status=PipelineRunStatus.RUNNING,
+            started_at=NOW + timedelta(hours=2),
+        ),
+        PipelineRun(
+            pipeline_id="orders/daily",
+            run_id="failed-run",
+            status=PipelineRunStatus.FAILED,
+            started_at=NOW + timedelta(hours=1),
+            finished_at=NOW + timedelta(hours=1, minutes=5),
+            error="Источник недоступен",
+        ),
+        PipelineRun(
+            pipeline_id="other",
+            run_id="successful-run",
+            status=PipelineRunStatus.SUCCESS,
+            started_at=NOW,
+            finished_at=NOW + timedelta(minutes=1),
+        ),
+    ]
+    return repository
+
+
+def test_pipeline_navigation_history_theme_and_refresh(browser_context, theme):
+    repository = pipeline_repository()
+    with browser_page(browser_context, repository.factory, theme) as page:
+        errors = []
+        requests = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto("http://application.test/?dataset=orders")
+        page.get_by_role("link", name="Запуски pipelines", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-theme", theme)
+        expect(page.locator("#pipeline-runs")).to_contain_text("Выберите pipeline")
+        page.get_by_role("button", name="orders/daily", exact=True).focus()
+        page.keyboard.press("Enter")
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(2)
+        expect(page.locator("#pipeline-runs")).to_contain_text("RUNNING")
+        expect(page.locator("#pipeline-runs")).to_contain_text("Ещё выполняется")
+        expect(page.locator("#pipeline-runs")).to_contain_text("Источник недоступен")
+        page.get_by_role("button", name="other", exact=True).click()
+        expect(page.locator("#pipeline-runs")).to_contain_text("SUCCESS")
+        page.go_back()
+        expect(page.locator("#pipeline-heading")).to_have_text("Pipeline: orders/daily")
+        page.go_forward()
+        expect(page.locator("#pipeline-heading")).to_have_text("Pipeline: other")
+        page.on("request", lambda request: requests.append(request.url))
+        next_theme = "cs" if theme != "cs" else "wizard"
+        page.get_by_label("Оформление", exact=True).select_option(next_theme)
+        expect(page.locator("html")).to_have_attribute("data-theme", next_theme)
+        assert requests == []
+        page.get_by_role("button", name="Обновить данные").click()
+        expect(page.locator("#pipeline-runs")).to_contain_text("successful-run")
+        expect(page.locator('[aria-busy="true"]')).to_have_count(0)
+        page.reload()
+        expect(page.locator("#pipeline-heading")).to_have_text("Pipeline: other")
+        page.get_by_role("link", name="Datasets и качество", exact=True).click()
+        expect(page.locator("html")).to_have_attribute("data-theme", next_theme)
+        expect(page.locator("#catalog")).to_contain_text("orders")
+        assert not errors
+
+
+def test_pipeline_pagination_keeps_selection(browser_context, theme):
+    repository = pipeline_repository()
+    prototype = repository.pipeline_runs[0]
+    repository.pipeline_runs = [
+        prototype.model_copy(update={"run_id": f"run-{index:02}"})
+        for index in range(51)
+    ] + [
+        prototype.model_copy(update={"pipeline_id": f"pipeline-{index:02}"})
+        for index in range(51)
+    ]
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.goto(
+            "http://application.test/pipelines?pipeline=orders%2Fdaily&keep=yes#runs"
+        )
+        expect(page.locator("#pipelines [data-pipeline]")).to_have_count(50)
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(50)
+        page.locator("#pipeline-runs").get_by_role("button", name="Далее").click()
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(1)
+        expect(page.locator("#pipeline-runs")).to_contain_text("run-00")
+        page.locator("#pipelines").get_by_role("button", name="Далее").click()
+        expect(page.locator("#pipelines [data-pipeline]")).to_have_count(2)
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(1)
+        page.get_by_role("button", name="Обновить данные").click()
+        expect(page.locator("#pipeline-runs")).to_contain_text("run-00")
+        expect(page.locator("#pipelines [data-pipeline]")).to_have_count(2)
+        page.get_by_role("button", name="pipeline-50", exact=True).click()
+        expect(page.locator("#pipeline-heading")).to_have_text("Pipeline: pipeline-50")
+        expect(
+            page.locator("#pipeline-runs").get_by_role("button", name="Назад")
+        ).to_be_disabled()
+        assert "keep=yes" in page.url and page.url.endswith("#runs")
+
+
+def test_pipeline_errors_retry_empty_and_late_response(browser_context, theme):
+    repository = pipeline_repository()
+    with browser_page(browser_context, repository.factory, theme) as page:
+        pattern = "**/api/v1/pipeline-runs?*"
+        page.route(pattern, lambda route: route.fulfill(status=503, json={}))
+        page.goto("http://application.test/pipelines?pipeline=orders%2Fdaily")
+        expect(page.locator("#pipeline-runs [role=alert]")).to_contain_text(
+            "Хранилище недоступно"
+        )
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(0)
+        page.unroute(pattern)
+        page.locator("#pipeline-runs").get_by_role("button", name="Повторить").click()
+        expect(page.locator("#pipeline-runs tbody tr")).to_have_count(2)
+        held = []
+        page.route(
+            "**/api/v1/pipeline-runs?pipeline_id=orders%2Fdaily&*",
+            lambda route: held.append(route),
+        )
+        with page.expect_request("**/pipeline-runs?pipeline_id=orders%2Fdaily&*"):
+            page.get_by_role("button", name="Обновить данные").click()
+        page.get_by_role("button", name="other", exact=True).click()
+        expect(page.locator("#pipeline-runs")).to_contain_text("successful-run")
+        assert held
+        held[0].fulfill(
+            status=200, json={"items": [], "limit": 50, "offset": 0, "has_more": False}
+        )
+        expect(page.locator("#pipeline-runs")).to_contain_text("successful-run")
+        page.goto("http://application.test/pipelines?pipeline=missing")
+        expect(page.locator("#pipeline-runs")).to_contain_text(
+            "нет сохранённых запусков"
+        )
+        page.goto("http://application.test/pipelines?pipeline=")
+        expect(page.locator("#pipeline-runs")).to_contain_text("пустой идентификатор")
+        repository.pipeline_runs = []
+        page.goto("http://application.test/pipelines")
+        expect(page.locator("#pipelines")).to_contain_text(
+            "нет pipelines с сохранёнными запусками"
+        )
+
+
+def test_pipeline_untrusted_text_mobile_and_direct_link(browser_context, theme):
+    from urllib.parse import urlencode
+
+    repository = pipeline_repository()
+    injection = '<img src=x onerror="window.injected=true">'
+    pipeline_id = "источник / ? & # '"
+    repository.pipeline_runs = [
+        repository.pipeline_runs[1].model_copy(
+            update={"pipeline_id": pipeline_id, "run_id": injection, "error": injection}
+        )
+    ]
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto(
+            f"http://application.test/pipelines?{urlencode({'pipeline': pipeline_id})}"
+        )
+        expect(page.locator("#pipeline-heading")).to_have_text(
+            f"Pipeline: {pipeline_id}"
+        )
+        expect(page.locator("#pipeline-runs")).to_contain_text(injection)
+        expect(page.locator("#pipeline-runs .status-error")).to_have_text("FAILED")
+        assert page.locator("#pipeline-runs img").count() == 0
+        assert page.evaluate("window.injected") is None
+        assert page.locator("#pipeline-runs .table-wrap").evaluate(
+            "element => element.scrollWidth > element.clientWidth"
+        )
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def test_postgres_pipeline_run_changes_after_refresh(browser_context, theme):
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from contracts.state import PipelineRun, PipelineRunStatus
+    from storage.postgres import PostgresPipelineRunRepository, connect
+    from tests.storage.support import TEST_DATABASE_URL, migrate
+
+    if not TEST_DATABASE_URL:
+        pytest.skip("Set TEST_DATABASE_URL to an expendable test database")
+    migrate(TEST_DATABASE_URL)
+    pipeline_id = f"browser-pipeline-{uuid4().hex}"
+    run = PipelineRun(
+        pipeline_id=pipeline_id,
+        run_id="run-1",
+        status=PipelineRunStatus.RUNNING,
+        started_at=NOW,
+    )
+    with connect(TEST_DATABASE_URL) as connection:
+        storage = PostgresPipelineRunRepository(connection)
+        storage.upsert_pipeline_run(run)
+        try:
+            with browser_page(
+                browser_context, lambda: open_repository(TEST_DATABASE_URL), theme
+            ) as page:
+                page.goto(f"http://application.test/pipelines?pipeline={pipeline_id}")
+                expect(page.locator("#pipeline-runs .status-running")).to_have_text(
+                    "RUNNING"
+                )
+                storage.upsert_pipeline_run(
+                    run.model_copy(
+                        update={
+                            "status": PipelineRunStatus.FAILED,
+                            "finished_at": NOW + timedelta(minutes=1),
+                            "error": "Сбой, сохранённый через storage",
+                        }
+                    )
+                )
+                page.get_by_role("button", name="Обновить данные").click()
+                expect(page.locator("#pipeline-runs .status-error")).to_have_text(
+                    "FAILED"
+                )
+                expect(page.locator("#pipeline-runs")).to_contain_text(
+                    "Сбой, сохранённый через storage"
+                )
+                assert f"pipeline={pipeline_id}" in page.url
+        finally:
+            connection.execute(
+                "DELETE FROM pipeline_runs WHERE pipeline_id = %s", (pipeline_id,)
+            )
+
+
+def test_batch_identifiers_and_counts_stay_readable(browser_context, theme):
+    repository = MemoryRepository()
+    source = "s3://raw-data/order_payments/2026-11-08-004.jsonl"
+    repository.batches[0] = repository.batches[0].model_copy(
+        update={"batch_id": "2026-11-08-004", "records": 2854, "object_key": source}
+    )
+    with browser_page(browser_context, repository.factory, theme) as page:
+        page.goto("http://application.test/?dataset=orders")
+        expect(page.locator("#batches tbody tr")).to_have_count(1)
+        for width in (1440, 1280, 1024, 900, 768, 390):
+            page.set_viewport_size({"width": width, "height": 1000})
+            facts = page.locator("#batches").evaluate(
+                """root => {
+                    const textLines = element => {
+                        const range = document.createRange();
+                        range.selectNodeContents(element);
+                        return [...range.getClientRects()].filter(rect => rect.width > 0).length;
+                    };
+                    const cells = root.querySelectorAll('tbody td');
+                    const wrap = root.querySelector('.table-wrap');
+                    return {
+                        idLines: textLines(cells[0].firstChild),
+                        countLines: textLines(cells[1].firstChild),
+                        countHeaderLines: textLines(root.querySelectorAll('th')[1]),
+                        tableWidth: root.querySelector('table').getBoundingClientRect().width,
+                        availableWidth: wrap.clientWidth,
+                        sectionWidth: root.parentElement.getBoundingClientRect().width,
+                        panelWidth: document.querySelector('#quality-section').getBoundingClientRect().width,
+                        schemaWidth: cells[3].getBoundingClientRect().width,
+                        sourceWidth: cells[4].getBoundingClientRect().width,
+                        pageFits: document.documentElement.scrollWidth <= innerWidth,
+                    };
+                }"""
+            )
+            assert facts["idLines"] == 1, (width, facts)
+            assert facts["countLines"] == 1, (width, facts)
+            assert facts["countHeaderLines"] == 1, (width, facts)
+            assert facts["pageFits"], (width, facts)
+            assert facts["schemaWidth"] < facts["sourceWidth"], (width, facts)
+            if theme == "wizard":
+                assert abs(facts["sectionWidth"] - facts["panelWidth"]) < 2
+                if width >= 768:
+                    assert facts["tableWidth"] <= facts["availableWidth"] + 1
+            expect(page.locator("#batches tbody td").nth(4)).to_have_text(source)
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        # Opaque IDs and large measurements must stay accessible without overlapping cells.
+        long_id = "batch-" + "long-identifier-" * 12
+        repository.batches[0] = repository.batches[0].model_copy(
+            update={"batch_id": long_id, "records": 123456789012}
+        )
+        page.get_by_role("button", name="Обновить данные").click()
+        expect(page.locator("#batches tbody td").first).to_have_text(long_id)
+        assert page.locator("#batches tbody td").first.evaluate(
+            "cell => cell.scrollWidth <= cell.clientWidth + 1"
+        )
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+def configuration_repository():
+    from contracts.evaluation import CheckExecution
+    from contracts.quality import CheckKind
+    from contracts.quality_config import CheckSpec, CheckSuite, RetrySettings
+
+    injection = '<img src=x onerror="window.injected=true">'
+    specs = (
+        CheckSpec(
+            key="volume",
+            kind=CheckKind.ROW_COUNT,
+            required=False,
+            params={"mode": "fixed", "min_count": 0},
+        ),
+        CheckSpec(
+            key="distribution",
+            kind=CheckKind.DISTRIBUTION,
+            column="payment_installments",
+            params={
+                "data_type": "numeric",
+                "bins": [0, 0.00001, 1, 5, 10, 25, 50, 100],
+            },
+        ),
+        CheckSpec(
+            key="nulls",
+            kind=CheckKind.NULL_RATE,
+            column="email",
+            params={"where_column": "status", "where_value": injection},
+        ),
+        CheckSpec(
+            key="schema",
+            kind=CheckKind.SCHEMA,
+            params={
+                "fields": [
+                    {"name": "order_id", "data_type": "string"},
+                    {"name": injection, "data_type": "string"},
+                ],
+                "allow_extra_fields": False,
+            },
+        ),
+        CheckSpec(
+            key="payment_value.non_negative",
+            kind=CheckKind.VALUE_RULE,
+            column="amount",
+            params={
+                "rule": "non_negative",
+                "allow_null": False,
+                "max_invalid_rate": 0.000001,
+            },
+        ),
+        CheckSpec(key="distinct", kind=CheckKind.CARDINALITY, column="customer_id"),
+    )
+    suite = CheckSuite(
+        dataset_id="orders",
+        version=7,
+        retry=RetrySettings(max_attempts=3, delays_seconds=(0, 2)),
+        checks=specs,
+    )
+    record = evaluation_record()
+    evaluation = record.evaluation.model_copy(
+        update={
+            "suite": suite,
+            "config_hash": suite.fingerprint,
+            "checks": tuple(
+                CheckExecution(check_id=f"orders.{spec.key}", spec=spec)
+                for spec in specs
+            ),
+        }
+    )
+    repository = MemoryRepository()
+    repository.evaluations = [record.model_copy(update={"evaluation": evaluation})]
+    return repository, injection
+
+
+def test_configuration_is_compact_keyboard_accessible_and_preserves_values(
+    browser_context, theme
+):
+    repository, injection = configuration_repository()
+    with browser_page(browser_context, repository.factory, theme) as page:
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto("http://application.test/?dataset=orders&scope=window-1")
+        expect(page.locator("#quality h3").first).to_contain_text("Расчёт:")
+        outer = page.locator("#quality > details").filter(
+            has=page.get_by_text("Конфигурация расчёта", exact=True)
+        )
+        outer.locator(":scope > summary").focus()
+        page.keyboard.press("Enter")
+        configuration = page.get_by_role(
+            "region", name="Сохранённая конфигурация расчёта", exact=True
+        )
+        expect(configuration).to_be_visible()
+        expect(configuration.locator("dd[data-config-key=version]")).to_have_text("7")
+        expect(configuration.locator("dd[data-config-key=max_attempts]")).to_have_text(
+            "3"
+        )
+        expect(
+            configuration.locator("dd[data-config-key=delays_seconds]")
+        ).to_have_text("0, 2")
+        region = configuration.get_by_role(
+            "region", name="Проверки в конфигурации", exact=True
+        )
+        checks = region.locator(
+            "table.configuration-check-table > tbody > tr.configuration-check"
+        )
+        expect(checks).to_have_count(6)
+        expect(
+            region.get_by_role("columnheader", name="Параметры", exact=True)
+        ).to_be_visible()
+        expect(
+            configuration.locator("details.configuration-check-properties[open]")
+        ).to_have_count(0)
+        assert configuration.bounding_box()["height"] < 1000
+        distribution = checks.filter(has=page.get_by_text("distribution", exact=True))
+        expect(distribution.locator("dd[data-config-key=bins]")).to_have_text(
+            "0, 0.00001, 1, 5, 10, 25, 50, 100"
+        )
+        expect(distribution.locator(".configuration-fail")).to_have_text("BLOCK")
+        properties = distribution.locator("details.configuration-check-properties")
+        properties.locator(":scope > summary").focus()
+        page.keyboard.press("Enter")
+        expect(
+            properties.locator("dd[data-config-key=on_insufficient_history]")
+        ).to_have_text("WARN")
+        # Sparse saved parameters must not acquire defaults while being displayed.
+        expect(distribution.locator("dd[data-config-key=min_samples]")).to_have_count(0)
+        volume = checks.filter(has=page.get_by_text("volume", exact=True))
+        volume.get_by_text("Свойства", exact=True).click()
+        expect(volume.locator("dd[data-config-key=min_count]")).to_have_text("0")
+        expect(volume.locator("dd[data-config-key=required]")).to_have_text("Нет")
+        nulls = checks.filter(has=page.get_by_text("nulls", exact=True))
+        expect(nulls.locator("dd[data-config-key=where_value]")).to_have_text(injection)
+        schema = checks.filter(has=page.get_by_text("schema", exact=True))
+        schema.locator(".configuration-fields-disclosure > summary").click()
+        expect(schema.get_by_role("table")).to_contain_text(injection)
+        for width in (1440, 900, 390):
+            page.set_viewport_size({"width": width, "height": 1000})
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            assert configuration.evaluate(
+                "element => element.scrollWidth <= element.clientWidth + 1"
+            )
+            expect(distribution.locator("dd[data-config-key=bins]")).to_be_visible()
+            assert region.get_by_role("columnheader", name="При UNKNOWN").evaluate(
+                """header => {
+                    const text = header.firstChild;
+                    const start = text.textContent.indexOf('UNKNOWN');
+                    const word = document.createRange();
+                    word.setStart(text, start);
+                    word.setEnd(text, start + 'UNKNOWN'.length);
+                    return word.getClientRects().length === 1;
+                }"""
+            )
+            assert (
+                checks.filter(
+                    has=page.get_by_text("payment_value.non_negative", exact=True)
+                )
+                .locator(".configuration-check-key")
+                .evaluate(
+                    """element => {
+                    const lines = new Map();
+                    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+                    while (walker.nextNode()) {
+                        const text = walker.currentNode;
+                        for (let index = 0; index < text.length; index++) {
+                            const letter = document.createRange();
+                            letter.setStart(text, index); letter.setEnd(text, index + 1);
+                            const top = Math.round(letter.getBoundingClientRect().top);
+                            lines.set(top, (lines.get(top) ?? '') + text.textContent[index]);
+                        }
+                    }
+                    return [...lines.values()].every(line => line.trim().length > 1);
+                }"""
+                )
+            )
+            if width == 390:
+                assert region.evaluate(
+                    "element => element.scrollWidth > element.clientWidth"
+                )
+        assert configuration.locator("img").count() == 0
+        assert page.evaluate("window.injected") is None
+        assert not errors

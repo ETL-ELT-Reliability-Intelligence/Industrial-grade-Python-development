@@ -9,7 +9,7 @@ import psycopg
 from psycopg.conninfo import make_conninfo
 
 from contracts.quality import QualityDecision, QualityStatus
-from contracts.state import Batch
+from contracts.state import Batch, PipelineRun
 from storage.postgres import connect
 from storage.serialization import check_result_from_row, reasons_from_json
 
@@ -18,19 +18,32 @@ from .models import (
     Dataset,
     EvaluationDetail,
     EvaluationSummary,
+    Pipeline,
     QualityScope,
     ScopeQuality,
     StoredCheck,
 )
+from .pipelines import PostgresPipelineReader
 from .repository import StorageUnavailable
 
 logger = logging.getLogger(__name__)
 
 
 class PostgresReadRepository:
+    """Read shared state through a caller-owned PostgreSQL connection."""
+
     def __init__(self, connection: psycopg.Connection[dict[str, Any]]) -> None:
         self.connection = connection
         self.evaluations = PostgresEvaluationReader(connection)
+        self.pipelines = PostgresPipelineReader(connection)
+
+    def list_pipelines(self, limit: int, offset: int) -> list[Pipeline]:
+        return self.pipelines.list_pipelines(limit, offset)
+
+    def list_pipeline_runs(
+        self, pipeline_id: str, limit: int, offset: int
+    ) -> list[PipelineRun]:
+        return self.pipelines.list_pipeline_runs(pipeline_id, limit, offset)
 
     def list_evaluations(
         self, dataset_id: str, scope_id: str, limit: int, offset: int
@@ -47,6 +60,7 @@ class PostgresReadRepository:
         for query in (
             "SELECT dataset_id, created_at FROM datasets LIMIT 0",
             "SELECT dataset_id, batch_id, records, received_at, schema_version, object_key FROM batches LIMIT 0",
+            "SELECT pipeline_id, run_id, status, started_at, finished_at, error FROM pipeline_runs LIMIT 0",
             "SELECT check_id, dataset_id, scope_id, column_name, kind, status, reason_code, "
             "message, observation, constraint_spec, details, recorded_at FROM quality_check_results LIMIT 0",
             "SELECT dataset_id, scope_id, status, reasons, decided_at FROM quality_decisions LIMIT 0",
@@ -124,6 +138,12 @@ class PostgresReadRepository:
 
 @contextmanager
 def open_repository(dsn: str | None) -> Iterator[PostgresReadRepository]:
+    """Yield a repository within a read-only, repeatable-read transaction.
+
+    Close the connection on exit. Connection, statement and lock waits are
+    bounded. Translate unavailable storage and missing schema or permissions
+    to StorageUnavailable; unrelated programming errors propagate.
+    """
     if not dsn:
         raise StorageUnavailable
     try:

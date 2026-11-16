@@ -20,11 +20,17 @@ DEFAULT_TOPICS: tuple[str, ...] = (
 class EventSource(Protocol):
     """Minimal consumer interface so tests can drive the loop without Kafka."""
 
-    def poll(self, timeout: float = 1.0) -> Event | None: ...
+    def poll(self, timeout: float = 1.0) -> Event | None:
+        """Return an event or None when the poll produces no processable message."""
+        ...
 
-    def commit(self) -> None: ...
+    def commit(self) -> None:
+        """Commit consumed offsets after the handler succeeds."""
+        ...
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Release consumer resources."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,10 @@ class StreamProcessorConfig:
         kafka_bootstrap_servers: str | None = None,
         group_id: str | None = None,
     ) -> "StreamProcessorConfig":
+        """Resolve explicit settings before environment values and built-in defaults.
+
+        Raise ValueError when no database URL is configured.
+        """
         source = os.environ if env is None else env
         dsn = database_url or source.get("DATABASE_URL")
         if not dsn:

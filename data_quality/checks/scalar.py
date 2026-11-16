@@ -4,6 +4,7 @@ from contracts.quality import CheckResult, CheckStatus
 
 
 def check_scalar(observation, constraint, *, kind, check_id, context=None):
+    """Compare a scalar with inclusive bounds; missing values yield UNKNOWN."""
     value = observation.value
     if value is None:
         status, code = CheckStatus.UNKNOWN, "missing_observation"

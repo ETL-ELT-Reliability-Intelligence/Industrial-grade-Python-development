@@ -1,7 +1,6 @@
-"""Usage: python -m services.ingestion [--source mock|olist] [--run-id ID] [--kafka HOST:PORT] [--s3-endpoint URL --s3-bucket B]
+"""Run source ingestion from the command line.
 
-mock:  [--rows N] [--volume-factor F]
-olist: --olist-dir DIR [--table orders|order_items|order_payments|customers] [--window N] [--volume-factor F]
+Use python -m services.ingestion --help for source, Kafka and S3 options.
 """
 
 import argparse

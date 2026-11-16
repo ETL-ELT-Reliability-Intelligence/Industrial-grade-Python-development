@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Contract(BaseModel):
+    """Base model with strict validation, frozen fields and forbidden extra keys."""
+
     model_config = ConfigDict(
         strict=True, frozen=True, extra="forbid", validate_default=True,
     )

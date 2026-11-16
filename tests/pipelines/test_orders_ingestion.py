@@ -84,3 +84,17 @@ def test_retry_configuration_and_repeated_start_report(dag_callables):
     assert first.started_at == repeated.started_at == context["dag_run"].start_date
     assert first.run_id == repeated.run_id
     assert first.event_id != repeated.event_id
+
+
+def test_ingest_passes_interval_to_mock(dag_callables, monkeypatch, tmp_path):
+    from services.ingestion.storage import LocalRawStore
+
+    tasks, _, context, _, _ = dag_callables
+    context.update(data_interval_start=START, data_interval_end=START + timedelta(hours=1))
+    store = LocalRawStore(tmp_path)
+    monkeypatch.setitem(tasks["ingest"].__globals__, "_store", lambda: store)
+    event = tasks["ingest"]()
+    rows = store.load_raw("mock_orders", event["batch_id"])
+    assert rows
+    assert all(START <= datetime.fromisoformat(r["created_at"]) < START + timedelta(hours=1)
+               for r in rows)

@@ -11,6 +11,8 @@ from contracts.quality_config import CheckSpec, CheckSuite
 
 
 class ExecutionStatus(str, Enum):
+    """Execution progress, independent of the quality compliance outcome."""
+
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
@@ -19,6 +21,8 @@ class ExecutionStatus(str, Enum):
 
 
 class Attempt(Contract):
+    """One numbered execution attempt, with optional completion and error details."""
+
     number: int = Field(ge=1)
     started_at: AwareDatetime
     finished_at: AwareDatetime | None = None
@@ -27,6 +31,8 @@ class Attempt(Contract):
 
 
 class CheckExecution(Contract):
+    """Frozen check inputs and retry history; only completed checks carry results."""
+
     check_id: NonBlankText
     spec: CheckSpec
     state: ExecutionStatus = ExecutionStatus.PENDING
@@ -48,6 +54,8 @@ class CheckExecution(Contract):
 
 
 class Evaluation(Contract):
+    """Persisted plan, execution state and delivery history for one batch evaluation."""
+
     evaluation_id: NonBlankText
     event: DatasetIngestedEvent
     suite: CheckSuite

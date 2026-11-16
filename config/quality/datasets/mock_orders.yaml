@@ -1,7 +1,19 @@
 dataset_id: mock_orders
-version: 2
+version: 3
 profile: standard
 checks:
+  created_at.valid_date:
+    kind: value_rule
+    column: created_at
+    params:
+      rule: aware_datetime
+    on_fail: BLOCK
+  created_at.not_future:
+    kind: value_rule
+    column: created_at
+    params:
+      rule: not_future
+    on_fail: BLOCK
   amount.non_negative:
     kind: value_rule
     column: amount

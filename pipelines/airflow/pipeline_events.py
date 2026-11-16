@@ -11,6 +11,8 @@ from services.ingestion.publisher import EventPublisher
 
 
 class PipelineRunReporter:
+    """Publish run lifecycle events using the original start and an injectable clock."""
+
     def __init__(
         self,
         publisher: EventPublisher,

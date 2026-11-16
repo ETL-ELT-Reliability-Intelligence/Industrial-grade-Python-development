@@ -33,6 +33,11 @@
       toggle.setAttribute("aria-pressed", String(!assistantHidden));
     }
     if (assistant) assistant.hidden = theme !== "wizard" || assistantHidden;
+    document.querySelectorAll("[data-theme-link]").forEach(link => {
+      const url = new URL(link.href);
+      url.searchParams.set("theme", theme);
+      link.href = url;
+    });
   }
 
   function apply(value, remember = false) {
@@ -58,7 +63,7 @@
       apply(event.target.value, true);
       writeURL();
     });
-    document.getElementById("assistant-toggle").addEventListener("click", () => {
+    document.getElementById("assistant-toggle")?.addEventListener("click", () => {
       assistantHidden = !assistantHidden;
       savePreference(assistantKey, String(assistantHidden));
       updateControls();

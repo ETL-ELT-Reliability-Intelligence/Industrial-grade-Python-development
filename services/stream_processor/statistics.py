@@ -33,7 +33,7 @@ def infer_schema(records: list[dict[str, Any]]) -> tuple[SchemaField, ...]:
     """Infer flat field types from values; mixed or empty columns are unknown."""
     columns = sorted({key for record in records for key in record})
     return tuple(
-        SchemaField(name=column, data_type=_field_type([record.get(column) for record in records]))
+        SchemaField(name=column, data_type=field_type([record.get(column) for record in records]))
         for column in columns
     )
 
@@ -58,10 +58,38 @@ def distinct_counts(records: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def _field_type(values: list[Any]) -> str:
+def field_type(values: list[Any]) -> str:
+    """Return canonical type name for a list of values; mixed or unknown for mixed/empty."""
     types = {_TYPE_NAMES.get(type(value), "object") for value in values if value is not None}
     return types.pop() if len(types) == 1 else "unknown"
 
 
 def _hashable(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
+
+
+def statistics_from_profile(profile) -> DatasetStatistics:
+    """Build DatasetStatistics from a BatchProfile's column summaries.
+
+    Uses data_type from each column summary for schema,
+    null_rate for null_rates, and distinct_count for distinct_counts.
+    """
+    columns = sorted(profile.columns)
+    schema = tuple(
+        SchemaField(name=column, data_type=profile.columns[column].get("data_type", "unknown"))
+        for column in columns
+    )
+    null_rates = {
+        column: profile.columns[column].get("null_rate")
+        for column in columns
+    }
+    distinct_counts = {
+        column: profile.columns[column].get("distinct_count", 0)
+        for column in columns
+    }
+    return DatasetStatistics(
+        row_count=profile.row_count,
+        schema=schema,
+        null_rates=null_rates,
+        distinct_counts=distinct_counts,
+    )

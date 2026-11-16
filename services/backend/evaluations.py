@@ -10,6 +10,8 @@ from .models import EvaluationDetail, EvaluationSummary
 
 
 class PostgresEvaluationReader:
+    """Read compact history pages and reconstruct details from saved executions."""
+
     def __init__(self, connection: psycopg.Connection[dict[str, Any]]) -> None:
         self.connection = connection
 

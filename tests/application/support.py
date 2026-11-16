@@ -10,7 +10,7 @@ from contracts.quality import (
     RowCountConstraint,
     RowCountObservation,
 )
-from contracts.state import Batch
+from contracts.state import Batch, PipelineRun
 from data_quality.checks.null_rate import check_null_rate
 from data_quality.checks.row_count import check_row_count
 from data_quality.policies import evaluate_quality
@@ -18,6 +18,7 @@ from services.backend.models import (
     Dataset,
     EvaluationDetail,
     EvaluationSummary,
+    Pipeline,
     QualityScope,
     ScopeQuality,
     StoredCheck,
@@ -72,6 +73,7 @@ class MemoryRepository:
         }
         # Newest first, matching the SQL sequence order rather than timestamps.
         self.evaluations: list[EvaluationDetail] = []
+        self.pipeline_runs: list[PipelineRun] = []
 
     @contextmanager
     def factory(self):
@@ -79,6 +81,18 @@ class MemoryRepository:
 
     def ready(self):
         pass
+
+    def list_pipelines(self, limit, offset):
+        ids = sorted({run.pipeline_id for run in self.pipeline_runs})
+        return [Pipeline(pipeline_id=value) for value in ids[offset : offset + limit]]
+
+    def list_pipeline_runs(self, pipeline_id, limit, offset):
+        runs = sorted(
+            (run for run in self.pipeline_runs if run.pipeline_id == pipeline_id),
+            key=lambda run: (run.started_at, run.run_id),
+            reverse=True,
+        )
+        return runs[offset : offset + limit]
 
     def list_datasets(self, limit, offset):
         return self.datasets[offset : offset + limit]

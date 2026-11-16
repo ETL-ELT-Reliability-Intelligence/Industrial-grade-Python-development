@@ -221,9 +221,87 @@ class PostgresMetricRepository(FeatureRepositoryMixin, _PostgresRepository):
             ),
         )
 
+    def get_profile(self, dataset_id: str, scope_id: str) -> BatchProfile | None:
+        row = self._connection.execute(
+            "SELECT profile FROM dataset_profiles WHERE dataset_id = %s AND scope_id = %s",
+            (dataset_id, scope_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return BatchProfile.model_validate_json(json.dumps(row["profile"]))
+
     def list_profiles(self, dataset_id: str) -> list[BatchProfile]:
         rows = self._connection.execute(
             "SELECT profile FROM dataset_profiles WHERE dataset_id = %s", (dataset_id,)
+        ).fetchall()
+        return [
+            BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows
+        ]
+
+    def list_profiles_between(
+        self,
+        dataset_id: str,
+        *,
+        source_id: str,
+        start: datetime,
+        end: datetime,
+        as_of: datetime,
+        limit: int = 1000,
+    ) -> list[BatchProfile]:
+        _aware(start, "start")
+        _aware(end, "end")
+        _aware(as_of, "as_of")
+        rows = self._connection.execute(
+            "SELECT profile FROM dataset_profiles "
+            "WHERE dataset_id = %s "
+            "AND profile->'event'->>'source_id' = %s "
+            "AND (profile->'event'->>'period_start')::timestamptz >= %s "
+            "AND (profile->'event'->>'period_start')::timestamptz < %s "
+            "AND (profile->'event'->>'received_at')::timestamptz <= %s "
+            "ORDER BY (profile->'event'->>'period_start')::timestamptz, "
+            "(profile->'event'->>'received_at')::timestamptz, "
+            "(profile->'event'->>'batch_id')::text "
+            "LIMIT %s",
+            (dataset_id, source_id, start, end, as_of, _limit(limit)),
+        ).fetchall()
+        return [
+            BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows
+        ]
+
+    def list_comparable_profiles(
+        self,
+        dataset_id: str,
+        *,
+        source_id: str,
+        granularity: str,
+        schema_version: int,
+        stats_version: str,
+        config_hash: str,
+        limit: int = 100,
+    ) -> list[BatchProfile]:
+        _limit(limit)
+        rows = self._connection.execute(
+            "SELECT profile FROM dataset_profiles "
+            "WHERE dataset_id = %s "
+            "AND profile->'event'->>'source_id' = %s "
+            "AND profile->'event'->>'granularity' = %s "
+            "AND profile->'event'->>'schema_version' = %s "
+            "AND profile->>'stats_version' = %s "
+            "AND profile->>'config_hash' = %s "
+            "AND (profile->>'eligible')::boolean = true "
+            "AND (profile->'event'->>'complete')::boolean IS NOT FALSE "
+            "ORDER BY profile->'event'->>'received_at' DESC, "
+            "profile->'event'->>'batch_id' DESC "
+            "LIMIT %s",
+            (
+                dataset_id,
+                source_id,
+                granularity,
+                str(schema_version),
+                stats_version,
+                config_hash,
+                limit,
+            ),
         ).fetchall()
         return [
             BatchProfile.model_validate_json(json.dumps(row["profile"])) for row in rows
@@ -296,6 +374,11 @@ class PostgresQualityRepository(_PostgresRepository):
 
     @contextmanager
     def evaluation_lock(self, dataset_id: str, scope_id: str):
+        """Hold a session advisory lock and release it when the context exits.
+
+        The lock spans repository transactions and serializes work for the hashed
+        dataset/scope key. It does not itself open a transaction.
+        """
         key = json.dumps([dataset_id, scope_id])
         self._connection.execute(
             "SELECT pg_advisory_lock(hashtextextended(%s, 0))", (key,)

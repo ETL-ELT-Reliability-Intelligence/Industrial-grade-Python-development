@@ -28,6 +28,7 @@ export class EvaluationController {
     return this.reload();
   }
 
+  /** Replace pending requests and render only responses for the current selection. */
   async reload() {
     this.pending?.abort();
     const request = new AbortController();

@@ -2,7 +2,9 @@
 
 from datetime import datetime, timedelta, timezone
 
+from contracts.events import DatasetIngestedEvent
 from contracts.metrics import MetricKind, MetricPoint
+from contracts.profiles import BatchProfile
 from contracts.quality import (
     QualityContext,
     RowCountConstraint,
@@ -268,6 +270,187 @@ class MetricRepositoryTests(DatabaseTestCase):
         self.assertEqual(
             self.repository.list_metric_history("orders", MetricKind.NULL_RATE), []
         )
+
+
+class ComparableProfileTests(DatabaseTestCase):
+    """PostgreSQL filtering for list_comparable_profiles."""
+
+    def setUp(self):
+        super().setUp()
+        from storage.postgres import PostgresMetricRepository
+
+        self.repository = PostgresMetricRepository(self.connection)
+
+    def _make_profile(self, batch_id, config_hash, eligible, stats_version="v2",
+                      received_at=None, granularity="batch", source_id="unspecified",
+                      schema_version=1, complete=True):
+        if received_at is None:
+            received_at = NOW - timedelta(hours=1)
+        event = DatasetIngestedEvent(
+            dataset_id="orders",
+            batch_id=batch_id,
+            records=100,
+            received_at=received_at,
+            schema_version=schema_version,
+            source_id=source_id,
+            granularity=granularity,
+            complete=complete,
+        )
+        return BatchProfile(
+            event=event,
+            config_hash=config_hash,
+            row_count=100,
+            checks={},
+            eligible=eligible,
+            stats_version=stats_version,
+        )
+
+    def test_filters_by_config_hash(self):
+        """Profiles with a different config_hash are excluded."""
+        self.repository.save_profile(self._make_profile("b1", "hash-a", True))
+        self.repository.save_profile(self._make_profile("b2", "hash-b", True))
+        result = self.repository.list_comparable_profiles(
+            "orders",
+            source_id="unspecified",
+            granularity="batch",
+            schema_version=1,
+            stats_version="v2",
+            config_hash="hash-a",
+            limit=10,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].event.batch_id, "b1")
+
+    def test_filters_by_stats_version(self):
+        """Profiles with a different stats_version are excluded."""
+        self.repository.save_profile(self._make_profile("b1", "hash", True))
+        self.repository.save_profile(
+            self._make_profile("b2", "hash", True, stats_version="v3")
+        )
+        result = self.repository.list_comparable_profiles(
+            "orders",
+            source_id="unspecified",
+            granularity="batch",
+            schema_version=1,
+            stats_version="v2",
+            config_hash="hash",
+            limit=10,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].event.batch_id, "b1")
+
+    def test_filters_by_source_id_and_granularity(self):
+        """Profiles with different source_id or granularity are excluded."""
+        self.repository.save_profile(
+            self._make_profile("b1", "hash", True, granularity="batch")
+        )
+        self.repository.save_profile(
+            self._make_profile("b2", "hash", True, source_id="csv", granularity="batch")
+        )
+        result = self.repository.list_comparable_profiles(
+            "orders",
+            source_id="unspecified",
+            granularity="batch",
+            schema_version=1,
+            stats_version="v2",
+            config_hash="hash",
+            limit=10,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].event.batch_id, "b1")
+
+    def test_eligible_false_excluded(self):
+        """Profiles with eligible=False are excluded."""
+        self.repository.save_profile(self._make_profile("b1", "hash", True))
+        self.repository.save_profile(self._make_profile("b2", "hash", False))
+        result = self.repository.list_comparable_profiles(
+            "orders",
+            source_id="unspecified",
+            granularity="batch",
+            schema_version=1,
+            stats_version="v2",
+            config_hash="hash",
+            limit=10,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].event.batch_id, "b1")
+
+    def test_complete_false_excluded(self):
+        """Profiles with complete=False are excluded."""
+        self.repository.save_profile(self._make_profile("b1", "hash", True))
+        self.repository.save_profile(
+            self._make_profile("b2", "hash", True, complete=False)
+        )
+        result = self.repository.list_comparable_profiles(
+            "orders",
+            source_id="unspecified",
+            granularity="batch",
+            schema_version=1,
+            stats_version="v2",
+            config_hash="hash",
+            limit=10,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].event.batch_id, "b1")
+
+    def test_limit_restricts_results(self):
+        """Result is truncated to the requested limit."""
+        for i in range(5):
+            self.repository.save_profile(
+                self._make_profile(f"b{i}", "hash", True, received_at=NOW - timedelta(hours=5 - i))
+            )
+        result = self.repository.list_comparable_profiles(
+            "orders",
+            source_id="unspecified",
+            granularity="batch",
+            schema_version=1,
+            stats_version="v2",
+            config_hash="hash",
+            limit=3,
+        )
+        self.assertEqual(len(result), 3)
+
+    def test_sorted_by_period_desc(self):
+        """Profiles are sorted by period_start descending, newest first."""
+        self.repository.save_profile(
+            self._make_profile("b1", "hash", True, received_at=NOW - timedelta(hours=5))
+        )
+        self.repository.save_profile(
+            self._make_profile("b2", "hash", True, received_at=NOW - timedelta(hours=3))
+        )
+        self.repository.save_profile(
+            self._make_profile("b3", "hash", True, received_at=NOW - timedelta(hours=1))
+        )
+        result = self.repository.list_comparable_profiles(
+            "orders",
+            source_id="unspecified",
+            granularity="batch",
+            schema_version=1,
+            stats_version="v2",
+            config_hash="hash",
+            limit=10,
+        )
+        self.assertEqual([r.event.batch_id for r in result], ["b3", "b2", "b1"])
+
+    def test_filters_by_schema_version(self):
+        """Profiles with a different schema_version are excluded."""
+        self.repository.save_profile(
+            self._make_profile("b1", "hash", True, schema_version=1)
+        )
+        self.repository.save_profile(
+            self._make_profile("b2", "hash", True, schema_version=2)
+        )
+        result = self.repository.list_comparable_profiles(
+            "orders",
+            source_id="unspecified",
+            granularity="batch",
+            schema_version=1,
+            stats_version="v2",
+            config_hash="hash",
+            limit=10,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].event.batch_id, "b1")
 
 
 class QualityRepositoryTests(DatabaseTestCase):

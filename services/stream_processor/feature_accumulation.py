@@ -12,6 +12,7 @@ from .raw import read_raw
 
 
 def load_feature_definitions(path=None):
+    """Load and validate per-dataset feature definitions from JSON."""
     path = path or Path(__file__).resolve().parents[2] / "config/features.json"
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     return {
@@ -21,6 +22,8 @@ def load_feature_definitions(path=None):
 
 
 class FeatureAccumulator:
+    """Persist optional feature snapshots independently of quality decisions."""
+
     def __init__(self, repository, clock, definitions=None, implementation=None):
         self.repository = repository
         self.clock = clock
@@ -30,6 +33,12 @@ class FeatureAccumulator:
         self.implementation = implementation or implementation_version()
 
     def collect(self, evaluation, records=None):
+        """Reuse or calculate a feature snapshot and record the profiling attempt.
+
+        Raw input and calculation failures become ERROR or CONFLICT attempts.
+        Storage failures propagate so delivery can retry. The quality decision
+        is unchanged; supplied records must expose their raw-byte sha256.
+        """
         event = evaluation.event
         definition = self.definitions.get(event.dataset_id, FeatureDefinition())
         attempt = ProfilingAttempt(

@@ -11,9 +11,11 @@ from services.ingestion.storage import RawStore, store_from_env
 
 
 def make_publisher() -> EventPublisher:
+    """Use Kafka when configured, otherwise collect events in memory."""
     servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS")
     return KafkaPublisher(servers) if servers else InMemoryPublisher()
 
 
 def make_store() -> RawStore:
+    """Use S3 when configured, otherwise store raw batches in the local data directory."""
     return store_from_env()

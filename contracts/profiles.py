@@ -6,6 +6,8 @@ from contracts.events import DatasetIngestedEvent
 
 
 class BatchProfile(Contract):
+    """Versioned batch measurements with history eligibility and configuration identity."""
+
     event: DatasetIngestedEvent
     stats_version: str = "v2"
     config_hash: str
@@ -13,3 +15,4 @@ class BatchProfile(Contract):
     columns: dict[str, dict] = Field(default_factory=dict)
     checks: dict[str, dict] = Field(default_factory=dict)
     eligible: bool = False
+    order_volume: dict | None = None

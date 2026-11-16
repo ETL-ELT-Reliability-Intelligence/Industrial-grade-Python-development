@@ -16,6 +16,8 @@ CONTRACT_VERSION = 1
 
 
 class EventType(str, Enum):
+    """Event names used as Kafka topics and wire discriminators."""
+
     DATASET_INGESTED = "dataset.ingested"
     PIPELINE_STARTED = "pipeline.started"
     PIPELINE_FINISHED = "pipeline.finished"
@@ -26,6 +28,8 @@ class EventType(str, Enum):
 
 
 class Event(Contract):
+    """Versioned event envelope with routing and deduplication identities."""
+
     event_id: UUID = Field(default_factory=uuid4)
     contract_version: int = Field(default=CONTRACT_VERSION, ge=1, le=1)
     event_type: EventType
@@ -42,13 +46,17 @@ class Event(Contract):
 
     @property
     def dedup_key(self) -> str:
-        """Identity of the fact the event reports. Delivery is at-least-once, so
-        a redelivered or republished event has the same dedup_key; consumers use it to skip duplicates.
-        Defaults to the event's own id; events describing a repeatable fact override it."""
+        """Identify the fact reported by this event.
+
+        The default uses event_id. Events describing repeatable facts override
+        this property so republishing the fact preserves its deduplication key.
+        """
         return f"{self.event_type.value}:{self.event_id}"
 
 
 class DatasetIngestedEvent(Event):
+    """One stored batch, optionally covering an explicit time window."""
+
     event_type: Literal[EventType.DATASET_INGESTED] = EventType.DATASET_INGESTED
     dataset_id: NonBlankText
     batch_id: NonBlankText
@@ -82,6 +90,8 @@ class DatasetIngestedEvent(Event):
 
 
 class SchemaChangedEvent(Event):
+    """A schema version transition detected while ingesting a batch."""
+
     event_type: Literal[EventType.SCHEMA_CHANGED] = EventType.SCHEMA_CHANGED
     dataset_id: NonBlankText
     batch_id: NonBlankText
@@ -105,6 +115,8 @@ class SchemaChangedEvent(Event):
 
 
 class PipelineEvent(Event):
+    """Lifecycle fact identified by pipeline and run, partitioned by pipeline."""
+
     pipeline_id: NonBlankText
     run_id: NonBlankText
     started_at: AwareDatetime
@@ -119,10 +131,14 @@ class PipelineEvent(Event):
 
 
 class PipelineStartedEvent(PipelineEvent):
+    """Notification that a pipeline run has started."""
+
     event_type: Literal[EventType.PIPELINE_STARTED] = EventType.PIPELINE_STARTED
 
 
 class PipelineFinishedEvent(PipelineEvent):
+    """Successful completion with a finish time no earlier than its start."""
+
     event_type: Literal[EventType.PIPELINE_FINISHED] = EventType.PIPELINE_FINISHED
     finished_at: AwareDatetime
 
@@ -139,6 +155,8 @@ class PipelineFinishedEvent(PipelineEvent):
 
 
 class PipelineFailedEvent(PipelineEvent):
+    """Failed completion with an optional upstream error description."""
+
     event_type: Literal[EventType.PIPELINE_FAILED] = EventType.PIPELINE_FAILED
     failed_at: AwareDatetime
     error: NonBlankText | None

@@ -6,14 +6,17 @@ from pathlib import Path
 
 from data_quality.config import load_suites
 from services.stream_processor.handlers import StreamEventHandler
-from services.stream_processor.publisher import KafkaPublisher
+from services.stream_processor.publisher import KafkaPublisher, NoOpPublisher
 from services.stream_processor.feature_accumulation import load_feature_definitions
+from services.stream_processor.order_volume import OrderVolumeMonitor
+from storage.postgres.order_volume import PostgresOrderVolumeRepository
 from storage.postgres import (
     connect,
     PostgresDatasetRepository,
     PostgresMetricRepository,
     PostgresPipelineRunRepository,
     PostgresQualityRepository,
+    PostgresAnomalyRepository,
 )
 
 
@@ -52,14 +55,20 @@ def main():
         original = quality.get_evaluation(args.evaluation_id)
         if original is None:
             parser.error("evaluation not found")
+        metrics = PostgresMetricRepository(connection)
+        publisher = KafkaPublisher(args.kafka) if args.kafka else None
         handler = StreamEventHandler(
             PostgresDatasetRepository(connection),
             PostgresPipelineRunRepository(connection),
-            PostgresMetricRepository(connection),
+            metrics,
             quality,
             suites=suites,
             feature_definitions=load_feature_definitions(args.feature_config),
-            publisher=KafkaPublisher(args.kafka) if args.kafka else None,
+            publisher=publisher,
+            order_volume_monitor=OrderVolumeMonitor(
+                PostgresOrderVolumeRepository(connection), metrics,
+                PostgresAnomalyRepository(connection), publisher or NoOpPublisher(),
+            ),
         )
         evaluation = handler.handle_dataset_ingested(
             original.event, request_id=args.request_id

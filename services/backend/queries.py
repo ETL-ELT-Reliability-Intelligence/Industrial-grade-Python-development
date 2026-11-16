@@ -2,13 +2,14 @@
 
 from typing import TypeVar
 
-from contracts.state import Batch
+from contracts.state import Batch, PipelineRun
 
 from .models import (
     Dataset,
     EvaluationDetail,
     EvaluationSummary,
     Page,
+    Pipeline,
     QualityScope,
     ScopeQuality,
 )
@@ -17,18 +18,22 @@ from .repository import (
     DatasetReadRepository,
     EvaluationNotFound,
     EvaluationRepository,
+    PipelineReadRepository,
 )
 
 T = TypeVar("T")
 
 
 def page(items: list[T], limit: int, offset: int) -> Page[T]:
+    """Build a page from an offset-selected slice containing up to limit + 1 items."""
     return Page(
         items=items[:limit], limit=limit, offset=offset, has_more=len(items) > limit
     )
 
 
 class DatasetQueries:
+    """Read dataset evidence, checking dataset existence before dependent queries."""
+
     def __init__(self, repository: DatasetReadRepository) -> None:
         self.repository = repository
 
@@ -36,6 +41,7 @@ class DatasetQueries:
         return page(self.repository.list_datasets(limit + 1, offset), limit, offset)
 
     def dataset(self, dataset_id: str) -> Dataset:
+        """Return dataset metadata or raise DatasetNotFound."""
         item = self.repository.get_dataset(dataset_id)
         if item is None:
             raise DatasetNotFound
@@ -61,6 +67,8 @@ class DatasetQueries:
 
 
 class EvaluationQueries:
+    """Read evaluation history and details after verifying dataset existence."""
+
     def __init__(
         self, repository: EvaluationRepository, datasets: DatasetQueries
     ) -> None:
@@ -78,8 +86,24 @@ class EvaluationQueries:
         )
 
     def detail(self, dataset_id: str, evaluation_id: str) -> EvaluationDetail:
+        """Return dataset-owned evaluation details or raise the matching not-found error."""
         self.datasets.dataset(dataset_id)
         evaluation = self.repository.get_evaluation(dataset_id, evaluation_id)
         if evaluation is None:
             raise EvaluationNotFound
         return evaluation
+
+
+class PipelineQueries:
+    def __init__(self, repository: PipelineReadRepository) -> None:
+        self.repository = repository
+
+    def pipelines(self, limit: int, offset: int) -> Page[Pipeline]:
+        return page(self.repository.list_pipelines(limit + 1, offset), limit, offset)
+
+    def runs(self, pipeline_id: str, limit: int, offset: int) -> Page[PipelineRun]:
+        return page(
+            self.repository.list_pipeline_runs(pipeline_id, limit + 1, offset),
+            limit,
+            offset,
+        )

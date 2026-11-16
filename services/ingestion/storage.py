@@ -15,7 +15,11 @@ def _run_name(run_id: str) -> str:
 
 
 class RawStore(Protocol):
-    def next_batch_number(self, dataset_id: str, day: str) -> int: ...
+    """Raw batch storage with schema history and committed run event records."""
+
+    def next_batch_number(self, dataset_id: str, day: str) -> int:
+        """Suggest the next batch number for a day without reserving it."""
+        ...
 
     def save_raw(self, dataset_id: str, batch_id: str, records: list[Record]) -> str:
         """Persist records and return their URI."""
@@ -34,6 +38,8 @@ class RawStore(Protocol):
 
 
 class LocalRawStore:
+    """Store JSONL batches and metadata on disk without replacing existing raw files."""
+
     def __init__(self, root: Path):
         self._root = root
 
@@ -74,6 +80,7 @@ class LocalRawStore:
         return json.loads(path.read_text()) if path.exists() else None
 
     def save_run(self, dataset_id: str, run_id: str, events: list[str]) -> None:
+        """Atomically replace a run record using a temporary file in the same directory."""
         path = self._run_path(dataset_id, run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -82,7 +89,11 @@ class LocalRawStore:
 
 
 class S3RawStore:
-    """RawStore on any S3-compatible API (MinIO locally). Same layout as LocalRawStore."""
+    """Store raw batches and metadata through an S3-compatible object API.
+
+    Uses the local store layout, but raw writes do not enforce exclusive
+    creation and batch number allocation is not atomic.
+    """
 
     def __init__(self, client: Any, bucket: str):
         self._client = client

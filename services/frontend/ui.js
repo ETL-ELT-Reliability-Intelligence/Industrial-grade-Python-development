@@ -1,3 +1,4 @@
+/** Shared DOM builders and display formatting for stored quality evidence. */
 export const dates = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" });
 export const numbers = new Intl.NumberFormat("ru-RU");
 

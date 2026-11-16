@@ -16,12 +16,14 @@ checks добавляет правила, overrides меняет унаслед�
 | null_rate | mode: historical/fixed; рост: min_increase в долях, min_samples; fixed: max_null_rate; условная выборка: where_column и where_value вместе |
 | cardinality | min_samples, volume_tolerance, count_tolerance, ratio_tolerance |
 | distribution | data_type: numeric/categorical, min_samples, max_distance; для numeric обязательны строго возрастающие конечные bins |
-| value_rule | rule: non_negative/datetime/date_order, allow_null, max_invalid_rate; для date_order обязательна other_column |
+| value_rule | rule: non_negative/datetime/date_order/aware_datetime/not_future, allow_null, max_invalid_rate; для date_order обязательна other_column |
 | schema | fields, allow_extra_fields; без fields используется сохранённая схема |
 
 Все исторические проверки имеют history_window (по умолчанию 10) и min_history (3).
 Для null_rate, cardinality, distribution и value_rule обязательна column.
 date_order требует, чтобы значение column было не раньше other_column.
+Для mock_orders `aware_datetime` требует дату со временем и часовым поясом,
+а `not_future` запрещает даты позже сохранённого `received_at` партии.
 allow_null: true исключает пустые значения/пары из знаменателя предметного правила.
 Если ни одного значения проверить нельзя, получается UNKNOWN, а не PASS.
 
