@@ -22,7 +22,7 @@ class FakeProducer:
 
     def __init__(self, config, *, error=None, pending=0, produce_raises=None):
         self.config, self.error, self.pending, self.produce_raises = config, error, pending, produce_raises
-        self.sent, self._callbacks = [], []
+        self.sent, self._callbacks, self.flush_timeouts = [], [], []
 
     def produce(self, topic, key, value, on_delivery):
         if self.produce_raises:
@@ -31,6 +31,7 @@ class FakeProducer:
         self._callbacks.append(on_delivery)
 
     def flush(self, timeout):
+        self.flush_timeouts.append(timeout)
         for callback in self._callbacks:
             callback(self.error, None)
         self._callbacks.clear()
@@ -39,11 +40,12 @@ class FakeProducer:
 
 @pytest.fixture
 def kafka(monkeypatch):
-    def make(**options):
+    def make(*, flush_timeout=None, **options):
         module = ModuleType("confluent_kafka")
         module.Producer = lambda config: FakeProducer(config, **options)
         monkeypatch.setitem(sys.modules, "confluent_kafka", module)
-        return KafkaPublisher("broker:9092")
+        extra = {} if flush_timeout is None else {"flush_timeout": flush_timeout}
+        return KafkaPublisher("broker:9092", **extra)
 
     return make
 
@@ -54,6 +56,19 @@ def test_publishes_event_json_keyed_by_dataset_with_idempotence(kafka):
 
     assert publisher._producer.config == {"bootstrap.servers": "broker:9092", "enable.idempotence": True}
     assert publisher._producer.sent == [("dataset.ingested", "orders", EVENT.model_dump_json())]
+
+
+def test_waits_longer_than_a_cold_broker_needs_for_the_producer_id(kafka):
+    # a freshly started broker answers "coordinator load in progress" for 10-20 seconds
+    publisher = kafka()
+    publisher.publish(EVENT)
+    assert publisher._producer.flush_timeouts == [45.0]
+
+
+def test_flush_timeout_is_configurable(kafka):
+    publisher = kafka(flush_timeout=5)
+    publisher.publish(EVENT)
+    assert publisher._producer.flush_timeouts == [5]
 
 
 def test_delivery_error_raises(kafka):

@@ -24,12 +24,21 @@ class InMemoryPublisher:
 
 
 class KafkaPublisher:
-    """Publish keyed Kafka events and wait up to ten seconds for delivery."""
+    """Publish keyed Kafka events and wait for delivery.
 
-    def __init__(self, bootstrap_servers: str):
+    The idempotent producer first acquires a producer id from the broker. A freshly started broker answers
+    "coordinator load in progress" for 10-20 seconds, so the default wait is longer than that.
+
+    Args:
+        bootstrap_servers: Kafka bootstrap servers.
+        flush_timeout: Seconds to wait for the delivery of each event.
+    """
+
+    def __init__(self, bootstrap_servers: str, flush_timeout: float = 45.0):
         from confluent_kafka import Producer
 
         self._producer = Producer({"bootstrap.servers": bootstrap_servers, "enable.idempotence": True})
+        self._flush_timeout = flush_timeout
 
     def publish(self, event: Event) -> None:
         errors: list[object] = []
@@ -42,5 +51,5 @@ class KafkaPublisher:
             self._producer.produce(event.topic, key=event.key, value=event.model_dump_json(), on_delivery=on_delivery)
         except BufferError as exc:  # local producer queue is full
             raise RuntimeError(f"Kafka delivery failed: {exc}") from exc
-        if self._producer.flush(10) or errors:
+        if self._producer.flush(self._flush_timeout) or errors:
             raise RuntimeError(f"Kafka delivery failed: {errors[0] if errors else 'timeout'}")
