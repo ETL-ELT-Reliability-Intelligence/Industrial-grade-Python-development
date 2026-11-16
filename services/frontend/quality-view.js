@@ -35,6 +35,7 @@ function policyDecision(decision) {
     return box;
   }
   box.append(badge(decision.status));
+  if (decision.status === "BLOCK") box.append(node("p", "BLOCK обозначает блокирующую оценку качества. Пайплайн автоматически не останавливается."));
   const reasons = node("ul");
   decision.reasons.forEach(reason => reasons.append(node("li", `${reason.code}${reason.check_id ? ` · ${reason.check_id}` : ""}: ${reason.message}`)));
   box.append(reasons);

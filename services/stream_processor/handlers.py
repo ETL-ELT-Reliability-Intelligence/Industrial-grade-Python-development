@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from collections.abc import Mapping
 from pathlib import Path
 import time
+import json
 from typing import Callable
 
 from contracts.events import (
@@ -21,7 +22,7 @@ from contracts.quality import (
     SchemaField,
 )
 from contracts.evaluation import ExecutionStatus
-from contracts.state import Batch, PipelineRun, PipelineRunStatus
+from contracts.state import Anomaly, Batch, PipelineRun, PipelineRunStatus
 from storage.repositories import (
     AnomalyRepository,
     DatasetRepository,
@@ -32,7 +33,7 @@ from storage.repositories import (
 
 from data_quality.config import load_suites, CheckSuite
 from data_quality.execution import prepare_check
-from .anomaly import AnomalyConfig, detect_anomalies
+from .anomaly import AnomalyConfig, detection_report
 from .evaluation import EvaluationRunner, PreparedChecks
 from .publisher import (
     EventPublisher,
@@ -199,8 +200,19 @@ class StreamEventHandler:
     def _detect_anomalies(self, evaluation) -> None:
         """Persist and publish deviations against the delivered profile's eligible history."""
         event = evaluation.event
+        report = self._anomalies.get_detection(evaluation.evaluation_id)
+        if report is not None:
+            for saved in report["anomalies"]:
+                anomaly = Anomaly.model_validate_json(json.dumps(saved))
+                self._anomalies.save_anomaly(anomaly)
+                self._publisher.publish(build_anomaly_event(anomaly))
+            return
         profile = self._metrics.get_profile(event.dataset_id, event.batch_id)
         if profile is None:
+            self._anomalies.save_detection(evaluation.evaluation_id, {
+                "status": "SKIPPED", "reason": "missing_profile", "checks": [], "anomalies": [],
+                "detector": self._anomaly_config.detector, "model_version": self._anomaly_config.version,
+            })
             return
         history = select_history(
             profile,
@@ -214,7 +226,15 @@ class StreamEventHandler:
                 limit=_history_limit(evaluation),
             ),
         )
-        for anomaly in detect_anomalies(profile, history, self._anomaly_config):
+        try:
+            report = detection_report(profile, history, self._anomaly_config)
+        except (ValueError, TypeError, ArithmeticError) as error:
+            report = {"status": "ERROR", "reason": f"{type(error).__name__}: {error}",
+                      "detector": self._anomaly_config.detector, "model_version": self._anomaly_config.version,
+                      "checks": [], "anomalies": []}
+        self._anomalies.save_detection(evaluation.evaluation_id, report)
+        for saved in report["anomalies"]:
+            anomaly = Anomaly.model_validate_json(json.dumps(saved))
             self._anomalies.save_anomaly(anomaly)
             self._publisher.publish(build_anomaly_event(anomaly))
 

@@ -32,6 +32,7 @@ class OrderVolumeMonitor:
             return
         result = self.repository.get_prediction(evaluation.evaluation_id)
         if result is None:
+            stored = None
             profile = self.profiles.get_profile(event.dataset_id, event.batch_id)
             observation = profile.order_volume if profile else None
             if not observation or observation.get("version") != OBSERVATION_VERSION or "count" not in observation:
@@ -53,6 +54,10 @@ class OrderVolumeMonitor:
                         result = {"status": "ERROR", "reason": str(error), "model_version": stored["model_version"]}
             result.update(period_start=event.period_start.isoformat() if event.period_start else None,
                           dataset_id=event.dataset_id, batch_id=event.batch_id)
+            if observation and "count" in observation:
+                result.setdefault("actual", observation["count"])
+            if observation and "count" in observation and stored is not None:
+                result.setdefault("model_version", stored["model_version"])
             self.repository.save_prediction(evaluation.evaluation_id, result)
         logger.info("Order volume evaluation=%s result=%s", evaluation.evaluation_id, result)
         if result["status"] == "WARN":

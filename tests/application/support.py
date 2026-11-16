@@ -22,6 +22,7 @@ from services.backend.models import (
     QualityScope,
     ScopeQuality,
     StoredCheck,
+    DetectionEvidence,
 )
 
 NOW = datetime(2026, 10, 12, 10, tzinfo=timezone.utc)
@@ -74,6 +75,15 @@ class MemoryRepository:
         # Newest first, matching the SQL sequence order rather than timestamps.
         self.evaluations: list[EvaluationDetail] = []
         self.pipeline_runs: list[PipelineRun] = []
+        self.detections = {}
+
+    def get_detections(self, record):
+        return self.detections.get(record.evaluation.evaluation_id) or DetectionEvidence(
+            dataset_id=record.dataset_id, batch_id=record.scope_id,
+            evaluation_id=record.evaluation.evaluation_id,
+            rule={"detector": "rules", "status": "SKIPPED", "reason": "not_recorded"},
+            ml={"detector": "lag_gradient_boosting", "status": "SKIPPED", "reason": "not_applicable"},
+        )
 
     @contextmanager
     def factory(self):

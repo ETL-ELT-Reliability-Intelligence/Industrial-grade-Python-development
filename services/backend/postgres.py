@@ -1,6 +1,7 @@
 """Read adapter over the existing schema; no schema changes or data writes."""
 
 import logging
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -9,7 +10,7 @@ import psycopg
 from psycopg.conninfo import make_conninfo
 
 from contracts.quality import QualityDecision, QualityStatus
-from contracts.state import Batch, PipelineRun
+from contracts.state import Anomaly, Batch, PipelineRun
 from storage.postgres import connect
 from storage.serialization import check_result_from_row, reasons_from_json
 
@@ -22,6 +23,7 @@ from .models import (
     QualityScope,
     ScopeQuality,
     StoredCheck,
+    DetectionEvidence,
 )
 from .pipelines import PostgresPipelineReader
 from .repository import StorageUnavailable
@@ -67,8 +69,42 @@ class PostgresReadRepository:
             "SELECT evaluation_id, dataset_id, scope_id, sequence, created_at, updated_at, snapshot "
             "FROM quality_evaluations LIMIT 0",
             "SELECT evaluation_id, check_id, snapshot FROM quality_executions LIMIT 0",
+            "SELECT evaluation_id, result FROM rule_detection_results LIMIT 0",
+            "SELECT evaluation_id, result FROM order_volume_predictions LIMIT 0",
+            "SELECT dataset_id, result FROM order_volume_training_runs LIMIT 0",
         ):
             self.connection.execute(query)
+
+    def get_detections(self, record):
+        from storage.postgres import PostgresAnomalyRepository
+        from storage.postgres.order_volume import PostgresOrderVolumeRepository
+
+        evaluation = record.evaluation
+        rule = PostgresAnomalyRepository(self.connection).get_detection(evaluation.evaluation_id)
+        if rule:
+            rule = dict(rule, anomalies=[Anomaly.model_validate_json(json.dumps(a)) for a in rule["anomalies"]])
+        prediction = PostgresOrderVolumeRepository(self.connection).get_prediction(evaluation.evaluation_id)
+        supported = evaluation.event.dataset_id == "mock_orders" and evaluation.event.source_id == "mock"
+        ml = dict(prediction or {"status": "SKIPPED", "reason": "not_recorded" if supported else "not_applicable"})
+        ml["detector"] = "lag_gradient_boosting"
+        rows = self.connection.execute(
+            "SELECT * FROM anomalies WHERE dataset_id = %s AND batch_id = %s "
+            "AND detector = 'lag_gradient_boosting' AND model_version = %s ORDER BY anomaly_id",
+            (record.dataset_id, evaluation.event.batch_id, ml.get("model_version")),
+        ).fetchall()
+        from storage.postgres.repositories import _anomaly
+        ml["anomalies"] = [_anomaly(row) for row in rows]
+        training = self.connection.execute(
+            "SELECT result, recorded_at FROM order_volume_training_runs WHERE dataset_id = %s ORDER BY run_id DESC LIMIT 1",
+            (record.dataset_id,),
+        ).fetchone() if supported else None
+        if training:
+            training = dict(training["result"], recorded_at=training["recorded_at"].isoformat())
+        return DetectionEvidence(
+            dataset_id=record.dataset_id, batch_id=evaluation.event.batch_id, evaluation_id=evaluation.evaluation_id,
+            rule=rule or {"detector": "robust_rules", "status": "SKIPPED", "reason": "not_recorded"},
+            ml=ml, training=training,
+        )
 
     def list_datasets(self, limit: int, offset: int) -> list[Dataset]:
         rows = self.connection.execute(

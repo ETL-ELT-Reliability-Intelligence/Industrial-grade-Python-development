@@ -145,3 +145,9 @@ dd { margin: 0 0 4px; overflow-wrap: anywhere; }
 #pipeline-heading { overflow-wrap: anywhere; }
 #pipeline-runs .table-wrap table { min-width: 700px; }
 .pipeline-error { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.detector-evidence, .detector-evidence section { min-width: 0; }
+.detector-evidence p { overflow-wrap: anywhere; }
+.detector-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
+.detector-evidence table { min-width: 640px; }
+.detector-evidence section { margin-block: 12px; }

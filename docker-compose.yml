@@ -1,7 +1,9 @@
 # Local data platform: Kafka, PostgreSQL, S3-compatible storage, Airflow (webserver + scheduler), schema
 # migrations, the quality bridge, the API/dashboard and web UIs for Kafka and PostgreSQL.
 x-airflow-common: &airflow-common
-  build: infra/airflow
+  build:
+    context: .
+    dockerfile: infra/airflow/Dockerfile
   image: etl-reliability-airflow:local
   environment:
     # Metadata in PostgreSQL (separate database), LocalExecutor: webserver and scheduler are separate processes.
@@ -11,6 +13,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__WEBSERVER__SECRET_KEY: local-demo-secret-key # shared so the webserver can read task logs
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/repo/pipelines/airflow/dags
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     PYTHONPATH: /opt/airflow/repo
     KAFKA_BOOTSTRAP_SERVERS: kafka:19092
     S3_ENDPOINT_URL: http://rustfs:9000
@@ -21,14 +25,14 @@ x-airflow-common: &airflow-common
     DATABASE_URL: postgresql://reliability:reliability@postgres:5432/reliability # the warehouse, not Airflow's metadata DB
   volumes:
     - .:/opt/airflow/repo
-    - ./data/olist:/data/olist:ro
+    - ${OLIST_HOST_DIR:-./data/olist}:/data/olist:ro
     - airflow-logs:/opt/airflow/logs
 
 services:
   kafka:
-    image: apache/kafka:3.8.0
+    image: apache/kafka:3.8.0@sha256:c89f315cff967322c5d2021434b32271393cb193aa7ec1d43e97341924e57069
     ports:
-      - "9092:9092"
+      - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -40,12 +44,17 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 
   postgres:
-    image: postgres:16
+    image: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
     ports:
-      - "${POSTGRES_PORT:-5432}:5432" # set POSTGRES_PORT if a local PostgreSQL already uses 5432
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: reliability
       POSTGRES_PASSWORD: reliability
@@ -54,17 +63,17 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U reliability -d reliability"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U reliability -d reliability"]
       interval: 3s
       timeout: 3s
       retries: 20
 
   # S3-compatible object storage. Was MinIO, but minio/minio is no longer pullable (see README).
   rustfs:
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
     ports:
-      - "9000:9000" # S3 API
-      - "9001:9001" # console
+      - "127.0.0.1:${S3_PORT:-9000}:9000"
+      - "127.0.0.1:${S3_CONSOLE_PORT:-9001}:9001"
     environment:
       RUSTFS_ACCESS_KEY: minioadmin
       RUSTFS_SECRET_KEY: minioadmin
@@ -73,7 +82,7 @@ services:
 
   # Airflow keeps its own metadata in a separate database of the same server (not SQLite).
   airflow-db-init:
-    image: postgres:16
+    image: postgres:16@sha256:dd2bf3ce2dc83a81674cf7f217fcfd8a5009a4b325dda5b843bfee82a06cff6f
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,32 +96,33 @@ services:
 
   # Web UIs for the demo: Kafka topics/messages, PostgreSQL tables. S3 has its own console on :9001 (rustfs).
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: provectuslabs/kafka-ui:v0.7.2@sha256:8f2ff02d64b0a7a2b71b6b3b3148b85f66d00ec20ad40c30bdcd415d46d31818
     depends_on:
       - kafka
     ports:
-      - "8081:8080"
+      - "127.0.0.1:${KAFKA_UI_PORT:-8081}:8080"
     environment:
       DYNAMIC_CONFIG_ENABLED: "false"
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
 
   adminer:
-    image: adminer:latest
+    image: adminer:4.8.1@sha256:34d37131366c5aa84e1693dbed48593ed6f95fb450b576c1a7a59d3a9c9e8802
     depends_on:
       - postgres
     ports:
-      - "8082:8080"
+      - "127.0.0.1:${ADMINER_PORT:-8082}:8080"
     environment:
       ADMINER_DEFAULT_SERVER: postgres
 
   # Applies the schema of the service tables (storage/postgres/migrations) and exits.
   migrate:
-    image: python:3.11-slim
+    image: etl-reliability-python:local
+    build:
+      context: .
+      dockerfile: infra/python/Dockerfile
     working_dir: /app
-    command: >-
-      sh -c "pip install -q 'alembic>=1.13,<2' 'SQLAlchemy>=2.0,<3' 'psycopg[binary]>=3.2,<4'
-      && python -m alembic -c storage/postgres/alembic.ini upgrade head"
+    command: python -m alembic -c storage/postgres/alembic.ini upgrade head
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,18 +133,14 @@ services:
 
   # Stream processor: dataset.ingested / pipeline.* events -> batches, metrics, quality decisions in PostgreSQL (docs/stream_processor.md).
   stream-processor:
-    image: python:3.11-slim
+    image: etl-reliability-python:local
     working_dir: /app
-    command: >-
-      sh -c "pip install -q 'pydantic>=2.9' 'PyYAML>=6,<7' 'confluent-kafka>=2.5' 'boto3>=1.34' 'psycopg[binary]>=3.2,<4' 'scikit-learn==1.7.2' 'joblib>=1.4,<2'
-      && python -m services.stream_processor"
+    command: python -m services.stream_processor
     depends_on:
       migrate:
         condition: service_completed_successfully
-      kafka:
-        condition: service_started
-      rustfs:
-        condition: service_started
+      infrastructure-init:
+        condition: service_completed_successfully
     restart: unless-stopped
     environment:
       PYTHONPATH: /app
@@ -149,19 +155,29 @@ services:
 
   # API + dashboard (http://localhost:8000) reading datasets, batches and quality decisions.
   backend:
-    image: python:3.11-slim
+    image: etl-reliability-python:local
+    build:
+      context: .
+      dockerfile: infra/python/Dockerfile
     working_dir: /app
-    command: >-
-      sh -c "pip install -q 'pydantic>=2.9' 'PyYAML>=6,<7' 'fastapi>=0.115,<1' 'uvicorn>=0.30,<1' 'psycopg[binary]>=3.2,<4'
-      && python -m uvicorn services.backend.main:app --host 0.0.0.0 --port 8000"
+    command: python -m uvicorn services.backend.main:app --host 0.0.0.0 --port 8000
     depends_on:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     environment:
       PYTHONPATH: /app
       DATABASE_URL: postgresql://reliability:reliability@postgres:5432/reliability
+      S3_ENDPOINT_URL: http://rustfs:9000
+      S3_BUCKET: raw-data
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=4)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     volumes:
       - .:/app:ro
 
@@ -185,7 +201,7 @@ services:
       airflow-init:
         condition: service_completed_successfully
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${AIRFLOW_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
@@ -198,10 +214,31 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+      infrastructure-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8974/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  infrastructure-init:
+    image: etl-reliability-python:local
+    build:
+      context: .
+      dockerfile: infra/python/Dockerfile
+    command: python -m scripts.init_infrastructure
+    depends_on:
       kafka:
-        condition: service_started
+        condition: service_healthy
       rustfs:
         condition: service_started
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      S3_ENDPOINT_URL: http://rustfs:9000
+      S3_BUCKET: raw-data
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
 
 volumes:
   airflow-logs:

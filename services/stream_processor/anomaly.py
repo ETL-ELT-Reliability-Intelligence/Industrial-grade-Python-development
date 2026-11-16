@@ -160,3 +160,32 @@ def detect_anomalies(
                     )
                 )
     return anomalies
+
+
+def detection_report(current, history, config):
+    """Keep explicit evidence for normal, skipped and anomalous measurements."""
+    measurements = [("row_count", float(current.row_count), [float(p.row_count) for p in history])]
+    for metric in ("null_rate", "distinct_ratio"):
+        for column, summary in sorted(current.columns.items()):
+            measurements.append((f"{metric}.{column}", summary.get(metric), _column_values(history, column, metric)))
+    checks = []
+    for metric, actual, values in measurements:
+        rule = config.metrics.get(metric.split(".", 1)[0])
+        if rule is None:
+            continue
+        item = {"metric": metric, "actual": actual, "observations": len(values)}
+        if actual is None or len(values) < config.min_observations:
+            item.update(status="SKIPPED", reason="missing_observation" if actual is None else "insufficient_history")
+        else:
+            expected = _median(values)
+            spread = max(1.4826 * _mad(values, expected), rule.absolute_tolerance,
+                         rule.relative_tolerance * abs(expected), 1e-9)
+            delta = rule.threshold_z * spread
+            item.update(expected=expected, lower=expected - delta, upper=expected + delta,
+                        status="WARN" if abs(actual - expected) >= delta else "PASS")
+        checks.append(item)
+    anomalies = detect_anomalies(current, history, config)
+    status = "WARN" if anomalies else "SKIPPED" if not checks or any(c["status"] == "SKIPPED" for c in checks) else "PASS"
+    return {"detector": config.detector, "model_version": config.version, "status": status,
+            "reason": "incomplete_measurements" if status == "SKIPPED" else None,
+            "checks": checks, "anomalies": [a.model_dump(mode="json") for a in anomalies]}

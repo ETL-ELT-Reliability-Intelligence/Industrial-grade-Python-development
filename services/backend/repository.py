@@ -29,6 +29,10 @@ class EvaluationNotFound(Exception):
 class EvaluationRepository(Protocol):
     """Read evaluation summaries and details within a dataset."""
 
+    def get_detections(self, evaluation: EvaluationDetail):
+        """Read saved detector evidence for an already ownership-checked evaluation."""
+        ...
+
     def list_evaluations(
         self, dataset_id: str, scope_id: str, limit: int, offset: int
     ) -> list[EvaluationSummary]:

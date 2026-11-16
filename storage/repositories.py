@@ -211,6 +211,14 @@ class QualityRepository(Protocol):
 class AnomalyRepository(Protocol):
     """Detected anomalies."""
 
+    def get_detection(self, evaluation_id: str) -> dict | None:
+        """Return immutable rule evidence for an evaluation, if computed."""
+        ...
+
+    def save_detection(self, evaluation_id: str, result: dict) -> None:
+        """Persist the first detector result before delivering its notifications."""
+        ...
+
     def save_anomaly(self, anomaly: Anomaly) -> None:
         """Store an anomaly; an already stored anomaly_id is left unchanged."""
         ...
